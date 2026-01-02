@@ -10,7 +10,6 @@ from PRSDataset import PRSDataset
 #from plotting.plot_utils import MODEL_NAME_GNOMAD_ANCESTRY_MAP
 from magenpy.utils.system_utils import makedir
 import argparse
-from moe_pytorch import make_deterministic
 
 
 def train_baseline_linear_models(dataset,
@@ -80,7 +79,6 @@ def train_moe_model_numpy(dataset,
                  expert_add_intercept=expert_add_intercept,
                  gate_penalty=gate_penalty,
                  expert_penalty=expert_penalty,
-                 svd=args.svd,
                  n_jobs=min(4, dataset.n_prs_models))
 
     moe.fit()
@@ -95,46 +93,35 @@ def train_moe_model_numpy(dataset,
                  expert_add_intercept=False,
                  gate_penalty=gate_penalty,
                  expert_penalty=expert_penalty,
-                 svd=args.svd,
                  n_jobs=min(4, dataset.n_prs_models))
 
     moe_global_int.fit()
 
-    moe_cfg = MoEPRS(prs_dataset=dataset,
-                expert_cols=dataset.prs_cols,
-                gate_input_cols=None,
-                global_covariates_cols=dataset.covariates_cols,
-                optimizer=optimizer,
-                fix_residuals=False,
-                gate_add_intercept=gate_add_intercept,
-                expert_add_intercept=False,  ## Check this?
-                gate_penalty=gate_penalty,
-                expert_penalty=expert_penalty,
-                svd=args.svd,
-                n_jobs=min(4, dataset.n_prs_models))
-    moe_cfg.fit()
-    
-    if not args.simplify:
-        # Try the same but with two-step fitting:
-        moe_global_int_two_step = copy.deepcopy(moe_global_int)
-        moe_global_int_two_step.two_step_fit()
-        
-    if args.simplify:
-        res = {
-            'MoE-CFG': moe_cfg,
-            'MoE': moe,
-            'MoE-global-int': moe_global_int,
-        }
-    else:
-        res = {
-            'MoE-CFG': moe_cfg,
-            'MoE': moe,
-            'MoE-global-int': moe_global_int,
-            'MoE-global-int-two-step': moe_global_int_two_step,
-        }
+    # Try the same but with two-step fitting:
+    moe_global_int_two_step = copy.deepcopy(moe_global_int)
+    moe_global_int_two_step.two_step_fit()
 
-    # if dataset.phenotype_likelihood != 'binomial':
-    if not args.simplify:
+    moe_cfg = MoEPRS(prs_dataset=dataset,
+                       expert_cols=dataset.prs_cols,
+                       gate_input_cols=None,
+                       global_covariates_cols=dataset.covariates_cols,
+                       optimizer=optimizer,
+                       fix_residuals=False,
+                       gate_add_intercept=gate_add_intercept,
+                       expert_add_intercept=False,  ## Check this?
+                       gate_penalty=gate_penalty,
+                       expert_penalty=expert_penalty,
+                       n_jobs=min(4, dataset.n_prs_models))
+    moe_cfg.fit()
+
+    res = {
+        'MoE-CFG': moe_cfg,
+        'MoE': moe,
+        'MoE-global-int': moe_global_int,
+        'MoE-global-int-two-step': moe_global_int_two_step
+    }
+
+    if dataset.phenotype_likelihood != 'binomial':
 
         moe_fix_resid = MoEPRS(prs_dataset=dataset,
                                expert_cols=dataset.prs_cols,
@@ -146,7 +133,6 @@ def train_moe_model_numpy(dataset,
                                expert_add_intercept=expert_add_intercept,
                                gate_penalty=gate_penalty,
                                expert_penalty=expert_penalty,
-                               svd=args.svd,
                                n_jobs=min(4, dataset.n_prs_models))
         moe_fix_resid.fit()
 
@@ -160,7 +146,6 @@ def train_moe_model_numpy(dataset,
                                expert_add_intercept=False,
                                gate_penalty=gate_penalty,
                                expert_penalty=expert_penalty,
-                               svd=args.svd,
                                n_jobs=min(4, dataset.n_prs_models))
         moe_fix_resid_global_int.fit()
 
@@ -194,71 +179,44 @@ def train_moe_model_numpy(dataset,
 
 
 def train_moe_models_torch(dataset,
-                            gate_model_layers=None,
-                            add_covariates_to_experts=False,
-                            loss='likelihood_mixture',
-                            optimizer='Adam',
-                            gate_add_batch_norm=True,
-                            weight_decay=0.,
-                            learning_rate=1e-2,
-                            max_epochs=100,
-                            batch_size=None,
-                            weigh_samples=False,
-                            seed = 16384,
-                            topk_k=None,                               
-                            tau_start=1.5,                         
-                            tau_end=1.0,                           
-                            hard_ste=False,                        
-                            lb_coef=0.00,                         
-                            ent_coef=0.03,
-                            ancestry_balance_lambda=None,                         
-                            use_ard_bias=True,
-                            use_global_head=True):
+                           gate_model_layers=None,
+                           add_covariates_to_experts=False,
+                           loss='likelihood_mixture',
+                           optimizer='Adam',
+                           penalty=0.,
+                           learning_rate=1e-2,
+                           max_epochs=100,
+                           batch_size=None,
+                           weigh_samples=False):
 
     dataset.set_backend("torch")
 
-    # Define which columns to fetch 
     group_getitem_cols = {
         'phenotype': [dataset.phenotype_col],
         'gate_input': dataset.covariates_cols,
-        'experts': dataset.prs_cols,
-        "global_input": dataset.covariates_cols
+        'experts': dataset.prs_cols
     }
 
-    # whether or not to have expert-specific covariates slopes
     if add_covariates_to_experts:
         group_getitem_cols['expert_covariates'] = dataset.covariates_cols
 
     dataset.set_group_getitem_cols(group_getitem_cols)
 
-    # Initialize the SGD MoE model through pytorch Lightning:
-    m = Lit_MoEPRS(
-        dataset.group_getitem_cols,
-        gate_model_layers=gate_model_layers,
-        loss=loss,
-        family=dataset.phenotype_likelihood,
-        optimizer=optimizer,
-        gate_add_batch_norm=gate_add_batch_norm,
-        learning_rate=learning_rate,
-        weight_decay=weight_decay,
-        topk_k=topk_k,                               
-        tau_start=tau_start,                         
-        tau_end=tau_end,                           
-        hard_ste=hard_ste,                        
-        lb_coef=lb_coef,                          
-        ent_coef=ent_coef,                         
-        use_ard_bias=use_ard_bias,
-        use_global_head=use_global_head,
-    )
+    # Initialize the torch MoE model:
+    m = Lit_MoEPRS(dataset.group_getitem_cols,
+                   gate_model_layers=gate_model_layers,
+                   loss=loss,
+                   family=dataset.phenotype_likelihood,
+                   optimizer=optimizer,
+                   learning_rate=learning_rate,
+                   weight_decay=penalty)
 
     # Train with PyTorch Lightning:
     _, m = train_model(m,
                        dataset,
                        max_epochs=max_epochs,
                        batch_size=batch_size,
-                       weigh_samples=weigh_samples,
-                       seed = seed, split_seed=seed,
-                       ancestry_balance_lambda=ancestry_balance_lambda)
+                       weigh_samples=weigh_samples)
 
     return m
 
@@ -267,49 +225,23 @@ def train_all_models(dataset,
                      baseline_kwargs,
                      moe_kwargs,
                      skip_baseline=False,
-                     skip_moe=False,    
+                     skip_moe=False,
                      moe_pytorch_kwargs=None):
 
     trained_models = {}
-    
-    if not args.pytorch_only:
-        if not skip_baseline:
-            trained_models.update(train_baseline_linear_models(dataset, **baseline_kwargs))
 
-        if not skip_moe:
-            trained_models.update(train_moe_model_numpy(dataset, **moe_kwargs))
+    if not skip_baseline:
+        trained_models.update(train_baseline_linear_models(dataset, **baseline_kwargs))
 
-    if not args.skip_moe_pytorch:
-        
-        # Train SGD MoE with residual variance estimation if phenotype family is gaussian
-        pt_loss = "likelihood_mixture_sigma" if dataset.phenotype_likelihood == "gaussian" else "likelihood_mixture"
+    if not skip_moe:
+        trained_models.update(train_moe_model_numpy(dataset, **moe_kwargs))
 
-        m_pt = train_moe_models_torch(
-            dataset,
-            loss=pt_loss,
-            optimizer="Adam",
-            gate_model_layers=None,
-            gate_add_batch_norm=False,
-            learning_rate=1e-3,
-            weight_decay=0,          
-            max_epochs=1000,            
-            batch_size=2048,          
-            seed=args.seed,
-            topk_k=None,                           # Top-k routing       
-            tau_start=1.5,                         # Temperature schedule starting value
-            tau_end=1.0,                           # Ending temperature value
-            hard_ste=False,                        # irrelevant when no top-k
-            lb_coef=0.00,                          # Load balancing coefficient
-            ent_coef=0.03,                         # Entropy regularization coefficient
-            ancestry_balance_lambda=None,          # Ancestry balancing sampling coefficient 
-            use_ard_bias=True,
-            add_covariates_to_experts=False,
-            use_global_head=True,
-        )
-
-        trained_models['MoE-PyTorch'] = m_pt
+    #if moe_pytorch_kwargs is not None:
+    #    moe_pytorch_model = train_moe_models_torch(dataset, **moe_pytorch_kwargs)
+    #    trained_models.update({'MoE-PyTorch': moe_pytorch_model})
 
     return trained_models
+
 
 if __name__ == '__main__':
 
@@ -335,13 +267,7 @@ if __name__ == '__main__':
     parser.add_argument('--skip-moe-pytorch', dest='skip_moe_pytorch', action='store_true',
                         default=False,
                         help='Whether to skip training the MoE models with PyTorch.')
-    parser.add_argument('--simplify', dest='simplify', action='store_true', default=False)
-    parser.add_argument('--svd', dest='svd', action='store_true', default=False)
-    parser.add_argument('--pytorch-only', dest='pytorch_only', action='store_true', default=False)
-    parser.add_argument('--seed', type=int, default=8, help='Random seed for reproducibility.')
     args = parser.parse_args()
-
-    make_deterministic(args.seed)
 
     prs_dataset = PRSDataset.from_pickle(args.dataset_path)
 
@@ -377,123 +303,7 @@ if __name__ == '__main__':
 
     makedir(output_dir)
 
-    import torch, pickle, json
-
     print("> Saving trained models to:\n\t", output_dir)
 
     for model_name, model in trained_models.items():
-        out = osp.join(output_dir, f'{model_name}.pkl')
-        try:
-            model.save(out)
-            print(f"Saved NumPy model: {model_name}")
-        except Exception:
-            #pytorch models
-            pt_path = osp.join(output_dir, f"{model_name}.pt")
-
-            # ---- Extract and store torch configuration ----
-            config = {
-                "loss": model.loss,
-                "optimizer": model.optimizer,
-                "learning_rate": model.lr,
-                "weight_decay": model.weight_decay,
-                "gate_model_layers": getattr(model, "gate_model_layers", None),
-                "gate_add_batch_norm": model.gate_add_batch_norm,
-                "family": model.family,
-
-                "topk_k": getattr(model, "topk_k", None),
-                "tau_start": getattr(model, "tau_start", 1.0),
-                "tau_end": getattr(model, "tau_end", 1.0),
-                "hard_ste": getattr(model, "hard_ste", True),
-                "lb_coef": getattr(model, "lb_coef", 0.0),
-                "eps": getattr(model, "eps", 1e-12),
-                "ent_coef_start": getattr(model, "ent_coef_start", getattr(model, "ent_coef", 0.0)),
-                "ent_coef_end": getattr(model, "ent_coef_end", getattr(model, "ent_coef", 0.0)),
-                "ent_warm_epochs": getattr(model, "ent_warm_epochs", 0),
-                "ent_decay_epochs": getattr(model, "ent_decay_epochs", 0),
-
-                "use_ard_bias": getattr(model, "use_ard_bias", False),
-                "use_global_head": getattr(model, "use_global_head", False),
-                "min_sigma2": float(getattr(model, "min_sigma2", 0.0)) if hasattr(model, "min_sigma2") else None,
-                "expert_bias_scale_floor": float(getattr(model, "expert_bias_scale_floor", 0.0)),
-                "has_expert_covariates": ("expert_covariates" in getattr(model, "group_getitem_cols", {})),
-            }
-
-            # ---- Save state_dict + config inside one checkpoint ----
-            torch.save({
-                "state_dict": model.state_dict(),
-                "config": config
-            }, pt_path)
-            print(f"Saved PyTorch model checkpoint: {model_name}")
-
-            # ---- Save scaler used at training time on the training dataset (same scaler will be used later for evaluation)----
-            scaler_path = osp.join(output_dir, "MoE-PyTorch.scaler.pkl")
-            with open(scaler_path, "wb") as f:
-                pickle.dump(copy.deepcopy(prs_dataset.scaler), f)
-            print(f"Saved scaler: {scaler_path}")
-
-            # ---- Optional: save JSON for inspection ----
-            json_path = osp.join(output_dir, "inspect_MoE-PyTorch_config.json")
-            with open(json_path, "w") as jf:
-                json.dump(config, jf, indent=2)
-            print(f"Saved config JSON: {json_path}")
-
-            # ---- Save gate covariate weights for inspection ----
-            if hasattr(model, "gate_model"):
-                try:
-                    import pandas as pd
-                    import torch.nn as nn
-
-                    cov_names = prs_dataset.covariates_cols
-                    expert_names = prs_dataset.prs_cols
-                    C = len(cov_names)
-                    K = len(expert_names)
-
-                    # Find the last Linear (logits) layer
-                    linear = None
-                    for layer in reversed(list(model.gate_model.gate)):
-                        if isinstance(layer, nn.Linear):
-                            linear = layer
-                            break
-                    if linear is None:
-                        raise RuntimeError("Could not find an nn.Linear layer in gate_model.gate")
-
-                    # Only export if this layer maps covariates -> experts
-                    if linear.in_features != C or linear.out_features != K:
-                        print(
-                            f"Skipping gate weight export for {model_name}: "
-                            f"logits layer is {linear.out_features}x{linear.in_features}, "
-                            f"but expected {K}x{C} (nonlinear/hidden gate)."
-                        )
-                    else:
-                        W = linear.weight.detach().cpu().numpy()    # (K, C)
-                        b = linear.bias.detach().cpu().numpy()      # (K,)
-
-                        cov_names = prs_dataset.covariates_cols     # length C
-                        expert_names = prs_dataset.prs_cols         # length K
-
-                        rows = []
-                        for k, e_name in enumerate(expert_names):
-                            for j, c_name in enumerate(cov_names):
-                                rows.append({
-                                    "expert_idx": k,
-                                    "expert": e_name,
-                                    "covariate_idx": j,
-                                    "covariate": c_name,
-                                    "weight": float(W[k, j]),
-                                })
-                            # store bias as a separate "covariate"
-                            rows.append({
-                                "expert_idx": k,
-                                "expert": e_name,
-                                "covariate_idx": -1,
-                                "covariate": "bias",
-                                "weight": float(b[k]),
-                            })
-
-                        df = pd.DataFrame(rows)
-                        weights_path = osp.join(output_dir, f"{model_name}_gate_weights.csv")
-                        df.to_csv(weights_path, index=False)
-                        print(f"Saved gate weights: {weights_path}")
-                except Exception as e:
-                    print(f"Could not save gate weights for {model_name}: {e}")
-
+        model.save(osp.join(output_dir, f'{model_name}.pkl'))

@@ -13,7 +13,7 @@ from moe import MoEPRS
 from PRSDataset import PRSDataset
 
 from moe_pytorch import make_deterministic, Lit_MoEPRS, train_model
-from utils import Timer, PeakMemory
+from utils import Timer
 import copy
 
 
@@ -29,7 +29,6 @@ def train_baseline_linear_models(dataset,
 
     base_models = dict()
     runtimes = dict()
-    mem_peaks = {}
 
     base_models['MultiPRS'] = MultiPRS(prs_dataset=dataset,
                                        expert_cols=dataset.prs_cols,
@@ -39,11 +38,10 @@ def train_baseline_linear_models(dataset,
                                        penalty_type=penalty_type,
                                        penalty=penalty)
 
-    with Timer() as timer, PeakMemory(interval=0.2, include_children=True) as mem:
+    with Timer() as timer:
         base_models['MultiPRS'].fit()
 
     runtimes['MultiPRS'] = timer.minutes
-    mem_peaks['MultiPRS'] = mem.peak_rss_gb
 
     base_models['Covariates'] = MultiPRS(prs_dataset=dataset,
                                          covariates_cols=dataset.covariates_cols,
@@ -51,11 +49,10 @@ def train_baseline_linear_models(dataset,
                                          class_weights=class_weights,
                                          penalty_type=penalty_type,
                                          penalty=penalty)
-    with Timer() as timer, PeakMemory(interval=0.2, include_children=True) as mem:
+    with Timer() as timer:
         base_models['Covariates'].fit()
 
     runtimes['Covariates'] = timer.minutes
-    mem_peaks['Covariates'] = mem.peak_rss_gb
 
     for i, pgs_id in enumerate(dataset.prs_cols):
 
@@ -67,13 +64,12 @@ def train_baseline_linear_models(dataset,
                                                        penalty_type=penalty_type,
                                                        penalty=penalty)
 
-        with Timer() as timer, PeakMemory(interval=0.2, include_children=True) as mem:
+        with Timer() as timer:
             base_models[f'{pgs_id}-covariates'].fit()
 
         runtimes[f'{pgs_id}-covariates'] = timer.minutes
-        mem_peaks[f'{pgs_id}-covariates'] = mem.peak_rss_gb
 
-    return base_models, runtimes, mem_peaks
+    return base_models, runtimes
 
 
 def train_moe_model_numpy(dataset,
@@ -89,7 +85,6 @@ def train_moe_model_numpy(dataset,
 
     moe_models = dict()
     runtimes = dict()
-    mem_peaks = {}
 
     moe = MoEPRS(prs_dataset=dataset,
                  expert_cols=dataset.prs_cols,
@@ -103,11 +98,10 @@ def train_moe_model_numpy(dataset,
                  expert_penalty=expert_penalty,
                  n_jobs=min(4, dataset.n_prs_models))
 
-    with Timer() as timer, PeakMemory(interval=0.2, include_children=True) as mem:
+    with Timer() as timer:
         moe.fit()
     
     runtimes['MoE'] = timer.minutes
-    mem_peaks['MoE'] = mem.peak_rss_gb
 
     moe_global_int = MoEPRS(prs_dataset=dataset,
                  expert_cols=dataset.prs_cols,
@@ -121,11 +115,10 @@ def train_moe_model_numpy(dataset,
                  expert_penalty=expert_penalty,
                  n_jobs=min(4, dataset.n_prs_models))
 
-    with Timer() as timer, PeakMemory(interval=0.2, include_children=True) as mem:
+    with Timer() as timer:
         moe_global_int.fit()
     
     runtimes['MoE-global-int'] = timer.minutes
-    mem_peaks['MoE-global-int'] = mem.peak_rss_gb
 
     moe_cfg = MoEPRS(prs_dataset=dataset,
                 expert_cols=dataset.prs_cols,
@@ -139,20 +132,18 @@ def train_moe_model_numpy(dataset,
                 expert_penalty=expert_penalty,
                 n_jobs=min(4, dataset.n_prs_models))
     
-    with Timer() as timer, PeakMemory(interval=0.2, include_children=True) as mem:
+    with Timer() as timer:
         moe_cfg.fit()
     
     runtimes['MoE-CFG'] = timer.minutes
-    mem_peaks['MoE-CFG'] = mem.peak_rss_gb
     
     # Try the same but with two-step fitting:
     moe_global_int_two_step = copy.deepcopy(moe_global_int)
     
-    with Timer() as timer, PeakMemory(interval=0.2, include_children=True) as mem:
+    with Timer() as timer:
         moe_global_int_two_step.two_step_fit()
     
     runtimes['MoE-global-int-two-step'] = timer.minutes
-    mem_peaks['MoE-global-int-two-step'] = mem.peak_rss_gb
             
     moe_models = {
         'MoE-CFG': moe_cfg,
@@ -175,11 +166,10 @@ def train_moe_model_numpy(dataset,
                                expert_penalty=expert_penalty,
                                n_jobs=min(4, dataset.n_prs_models))
         
-        with Timer() as timer, PeakMemory(interval=0.2, include_children=True) as mem:
+        with Timer() as timer:
             moe_fix_resid.fit()
         
         runtimes['MoE-fixed-resid'] = timer.minutes
-        mem_peaks['MoE-fixed-resid'] = mem.peak_rss_gb
 
         moe_fix_resid_global_int = MoEPRS(prs_dataset=dataset,
                                expert_cols=dataset.prs_cols,
@@ -193,11 +183,10 @@ def train_moe_model_numpy(dataset,
                                expert_penalty=expert_penalty,
                                n_jobs=min(4, dataset.n_prs_models))
         
-        with Timer() as timer, PeakMemory(interval=0.2, include_children=True) as mem:
+        with Timer() as timer:
             moe_fix_resid_global_int.fit()
         
         runtimes['MoE-fixed-resid-global-int'] = timer.minutes
-        mem_peaks['MoE-fixed-resid-global-int'] = mem.peak_rss_gb
 
         moe_models['MoE-fixed-resid'] = moe_fix_resid
         moe_models['MoE-fixed-resid-global-int'] = moe_fix_resid_global_int
@@ -205,11 +194,10 @@ def train_moe_model_numpy(dataset,
         # Try two-step fitting for the fixed residuals + global intercept model:
         moe_fix_resid_global_int_two_step = copy.deepcopy(moe_fix_resid_global_int)
         
-        with Timer() as timer, PeakMemory(interval=0.2, include_children=True) as mem:
+        with Timer() as timer:
             moe_fix_resid_global_int_two_step.two_step_fit()
         
         runtimes['MoE-fixed-resid-global-int-two-step'] = timer.minutes
-        mem_peaks['MoE-fixed-resid-global-int-two-step'] = mem.peak_rss_gb
 
         moe_models['MoE-fixed-resid-global-int-two-step'] = moe_fix_resid_global_int_two_step
 
@@ -230,7 +218,7 @@ def train_moe_model_numpy(dataset,
         res['MoE-huber'] = moe_huber
         """
 
-    return moe_models, runtimes, mem_peaks
+    return moe_models, runtimes
 
 
 def train_moe_models_torch(dataset,
@@ -308,7 +296,7 @@ def train_moe_models_torch(dataset,
     )
 
     # Train with PyTorch Lightning:
-    with Timer() as t, PeakMemory(interval=0.2, include_children=True, track_gpu=True) as mem:
+    with Timer() as t:
         _, m = train_model(m,
                         dataset,
                         max_epochs=max_epochs,
@@ -318,8 +306,6 @@ def train_moe_models_torch(dataset,
                         ancestry_balance_lambda=ancestry_balance_lambda)
 
     m.runtime_minutes = t.minutes  # <-- attach to model for saving later 
-    m.peak_rss_gb = float(mem.peak_rss_gb)
-    m.peak_cuda_alloc_gb = float(mem.peak_cuda_alloc_gb)
 
     return m
 
@@ -336,21 +322,18 @@ def train_all_models(dataset,
 
     trained_models = {}
     runtimes = {}
-    memory_peaks = {}
 
     
     if not pytorch_only:
         if not skip_baseline:
-            bm, br, bm_mem = train_baseline_linear_models(dataset, **baseline_kwargs)
+            bm, br = train_baseline_linear_models(dataset, **baseline_kwargs)
             trained_models.update(bm)
             runtimes.update(br)
-            memory_peaks.update(bm_mem)
 
         if not skip_moe:
-            mm, mr, mm_mem = train_moe_model_numpy(dataset, **moe_kwargs)
+            mm, mr = train_moe_model_numpy(dataset, **moe_kwargs)
             trained_models.update(mm)
             runtimes.update(mr)
-            memory_peaks.update(mm_mem)
 
     if not skip_moe_pytorch:
         #-----------------------------
@@ -387,9 +370,8 @@ def train_all_models(dataset,
         # runtime is stored on the model:
         if hasattr(m_pt, "runtime_minutes"):
             runtimes['MoE-PyTorch'] = float(m_pt.runtime_minutes)
-        memory_peaks['MoE-PyTorch'] = getattr(m_pt, "peak_rss_gb", None)
 
-    return trained_models, runtimes, memory_peaks
+    return trained_models, runtimes
 
 if __name__ == '__main__':
 
@@ -439,7 +421,7 @@ if __name__ == '__main__':
     if len(args.moe_kwargs) > 0:
         moe_kwargs = {k: v for k, v in [kw.split('=') for kw in args.moe_kwargs.split(',')] if v}
 
-    trained_models, model_runtimes, model_mem_peaks = train_all_models(
+    trained_models, model_runtimes = train_all_models(
         prs_dataset,
         baseline_kwargs,
         moe_kwargs,
@@ -476,9 +458,6 @@ if __name__ == '__main__':
 
             if runtime_min is not None:
                 payload = {"Runtime_min": runtime_min}
-                peak_gb = model_mem_peaks.get(model_name, None)
-                if peak_gb is not None:
-                    payload["PeakRSS_GB"] = float(peak_gb)
                 with open(osp.join(output_dir, f"{model_name}_runtime.json"), "w") as f:
                     json.dump(payload, f)
         except Exception:
@@ -525,9 +504,6 @@ if __name__ == '__main__':
 
             if runtime_min is not None:
                 payload = {"Runtime_min": runtime_min}
-                peak_gb = model_mem_peaks.get(model_name, None)
-                if peak_gb is not None:
-                    payload["PeakRSS_GB"] = float(peak_gb)
                 with open(osp.join(output_dir, f"{model_name}_runtime.json"), "w") as f:
                     json.dump(payload, f)
 

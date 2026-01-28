@@ -16,7 +16,11 @@ cols_dict = {
     'RES_MEASURED_FVC': 'FVC',
     'RES_BODY_MASS_INDEX': 'BMI',
     'CALC_AVG_HEIGHT_CM': 'HEIGHT',
-    'ASTHMA_OCCURRENCE': 'ASTHMA'
+    'ASTHMA_OCCURRENCE': 'ASTHMA',
+    'HIGHEST_LVL_COMPLETED': 'EDU',
+    'CALC_AVG_DIASTOLIC_BP': 'DBP',
+    'CALC_AVG_SYSTOLIC_BP': 'SBP',
+    'CALC_WAIST_TO_HIP_RATIO': 'WHR'
 }
 
 cartagene_homedir = "$HOME/projects/ctb-sgravel/cartagene/research/quebec_structure_936028/data/"
@@ -32,6 +36,29 @@ pheno_df['FID'] = pheno_df['IID']
 
 # --------------------------------------------------------------------------------
 # Quantitative phenotypes
+
+
+def transform_education_years(dat):
+    """
+    This function transforms the "HIGHEST_LVL_COMPLETED" variable
+    in the CARTaGENE biobank to "years of education" as defined in the
+    UK Biobank and similar resources.
+    """
+
+    return dat.map({
+        -9: np.nan,   # Not available
+        -7: np.nan,   # Not applicable
+        1: 7,       # NONE
+        2: 7,       # ELEMENTARY
+        3: 10,      # HIGH SCHOOL
+        4: 15,      # TECHNICAL SCHOOL
+        5: 19,      # COLLEGE
+        6: 19,      # UNIVERSITY CERTIFICATE
+        7: 20,      # BACHELOR DEGREE
+        8: 20,      # GRADUATE STUDIES
+        9: np.nan,    # NO ANSWER
+        99: np.nan    # MISSING
+    })
 
 
 def recode_nan(df, col='phenotype'):
@@ -98,6 +125,44 @@ print("FEV1/FVC")
 print(fev1_fvc['phenotype'].describe())
 print(pd.Series(zscore(fev1_fvc['phenotype'], nan_policy='omit')).describe())
 fev1_fvc.to_csv("data/phenotypes/cartagene/FEV1_FVC.txt", sep="\t", index=False, header=False, na_rep='NA')
+
+# DBP:
+
+dbp = pheno_df[['FID', 'IID', 'DBP']].copy()
+dbp.columns = ['FID', 'IID', 'phenotype']
+dbp = recode_nan(dbp)
+dbp['phenotype'] = np.where(detect_outliers(dbp['phenotype'],
+    stratify=pheno_df['Sex']), np.nan, dbp['phenotype'])
+print("Diastolic blood pressure")
+print(dbp['phenotype'].describe())
+print(pd.Series(zscore(dbp['phenotype'], nan_policy='omit')).describe())
+dbp.to_csv("data/phenotypes/cartagene/DBP.txt",
+    sep="\t", index=False, header=False, na_rep='NA')
+
+# SBP:
+sbp = pheno_df[['FID', 'IID', 'SBP']].copy()
+sbp.columns = ['FID', 'IID', 'phenotype']
+sbp = recode_nan(sbp)
+sbp['phenotype'] = np.where(detect_outliers(sbp['phenotype'],
+    stratify=pheno_df['Sex']), np.nan, sbp['phenotype'])
+print("Systolic blood pressure")
+print(sbp['phenotype'].describe())
+print(pd.Series(zscore(sbp['phenotype'], nan_policy='omit')).describe())
+sbp.to_csv("data/phenotypes/cartagene/SBP.txt",
+    sep="\t", index=False, header=False, na_rep='NA')
+
+# WHR:
+whr = pheno_df[['FID', 'IID', 'WHR']].copy()
+whr.columns = ['FID', 'IID', 'phenotype']
+whr = recode_nan(whr)
+whr['phenotype'] = whr['phenotype'].replace({9: np.nan})
+whr['phenotype'] = np.where(detect_outliers(whr['phenotype'],
+    stratify=pheno_df['Sex']), np.nan, whr['phenotype'])
+print("Waist-to-hip ratio")
+print(whr['phenotype'].describe())
+print(pd.Series(zscore(whr['phenotype'], nan_policy='omit')).describe())
+whr.to_csv("data/phenotypes/cartagene/WHR.txt",
+    sep="\t", index=False, header=False, na_rep='NA')
 
 # --------------------------------------------------------------------------------
 # Binary phenotypes

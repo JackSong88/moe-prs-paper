@@ -35,6 +35,12 @@ MODEL_NAME_ANCESTRY_MAP = {
 
     'PGS002311': 'EUR',
     'PGS002358': 'EAS',
+
+    'PGS005200': 'AFR',
+    'PGS005201': 'AMR',
+    'PGS005202': 'EAS',
+    'PGS005203': 'EUR',
+    'PGS005204': 'CSA',
 }
 
 df = pd.read_csv(osp.join(osp.dirname(osp.dirname(__file__)), "tables/phenotype_prs_table.csv"))

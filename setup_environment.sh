@@ -19,16 +19,17 @@ python -m pip install -r requirements.txt
 
 deactivate
 
-echo "========================================================"
-echo "Setting up environment for Hail..."
+# NOTE: No longer used in the pipeline.
+# echo "========================================================"
+#echo "Setting up environment for Hail..."
 
-rm -rf env/hail/
-python -m venv env/hail/
-source env/hail/bin/activate
-python -m pip install --upgrade pip
-python -m pip install hail
-python -m pip install onnxruntime
+#rm -rf env/hail/
+#python -m venv env/hail/
+#source env/hail/bin/activate
+#python -m pip install --upgrade pip
+#python -m pip install hail
+#python -m pip install onnxruntime
 
-deactivate
+# deactivate
 
 echo "Done!"

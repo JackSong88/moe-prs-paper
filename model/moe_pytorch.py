@@ -4,7 +4,7 @@ from functools import partial
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, WeightedRandomSampler, Subset
+from torch.utils.data import DataLoader, WeightedRandomSampler, Subset, Dataset
 from sklearn.model_selection import train_test_split
 import lightning.pytorch as pl
 
@@ -21,6 +21,47 @@ try:
 except ImportError:
     torchsort = None
 
+<<<<<<< Updated upstream
+=======
+import os
+
+def configure_cpu_threads(cpus_per_task: int, num_workers: int, interop_threads: int = 1):
+    """
+    Give the main training process most of the CPU threads, leave some CPU capacity
+    for DataLoader workers.
+    """
+    compute_threads = max(1, cpus_per_task - num_workers)
+
+    # PyTorch CPU threading (main process)
+    torch.set_num_threads(compute_threads)
+    try:
+        torch.set_num_interop_threads(interop_threads)
+    except RuntimeError:
+        pass
+
+    # BLAS/threaded libs (main process)
+    os.environ["OMP_NUM_THREADS"] = str(compute_threads)
+    os.environ["MKL_NUM_THREADS"] = str(compute_threads)
+    os.environ["OPENBLAS_NUM_THREADS"] = str(compute_threads)
+    os.environ["NUMEXPR_NUM_THREADS"] = str(compute_threads)
+
+    return compute_threads
+
+def dataloader_worker_init_fn(worker_id: int):
+    """
+    Prevent each DataLoader worker from spawning its own CPU threadpool.
+    This avoids massive oversubscription when num_workers > 0.
+    """
+    import os
+    import torch
+
+    torch.set_num_threads(1)
+
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["NUMEXPR_NUM_THREADS"] = "1"
+>>>>>>> Stashed changes
 
 class ConvergenceCheck(pl.callbacks.Callback):
 
@@ -41,7 +82,9 @@ class ConvergenceCheck(pl.callbacks.Callback):
 
     def on_train_end(self, trainer, pl_module):
 
-        current_loss = trainer.callback_metrics['train_loss']
+        current_loss_t = trainer.callback_metrics['train_loss']
+        current_loss = float(current_loss_t.detach().cpu().item()) if isinstance(current_loss_t, torch.Tensor) else float(current_loss_t)
+        
         current_params = [p.detach().numpy().copy() for p in pl_module.parameters()]
 
         if self.best_params is not None:
@@ -60,6 +103,21 @@ class ConvergenceCheck(pl.callbacks.Callback):
             self.best_loss = current_loss
             self.best_params = current_params
 
+class IndexSubset(Dataset):
+    """
+    Like torch.utils.data.Subset, but returns the ORIGINAL row index (int),
+    so collate_fn can fetch the whole batch via PRSDataset.get_batch().
+    Keeps .dataset and .indices so your sampler helpers still work.
+    """
+    def __init__(self, dataset, indices):
+        self.dataset = dataset
+        self.indices = np.asarray(indices)
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, i):
+        return int(self.indices[i])
 
 #########################################################
 
@@ -130,6 +188,24 @@ def gaussian_moe_nll(expert_weights, expert_predictions, phenotype, sigma2, eps=
 
     return -(torch.logsumexp(logw + loglik, dim=1)).mean()
 
+<<<<<<< Updated upstream
+=======
+# def gaussian_moe_loss_exp_weighted(expert_weights, expert_predictions, phenotype, sigma2, eps=1e-12):
+
+#     y = phenotype.view(-1, 1)
+#     sigma2 = sigma2.view(1, -1).clamp_min(eps)                      # (1,K)
+    
+#     # Square residuals
+#     resid2 = (expert_predictions - y) ** 2                          # (N,K)
+
+#     # Calculate NLL for EACH expert independently
+#     expert_nll = 0.5 * (torch.log(2.0 * np.pi * sigma2) + resid2 / sigma2) # (N,K)
+
+#     weighted_loss = (expert_weights * expert_nll).sum(dim=1)        # (N,)
+
+#     return weighted_loss.mean()
+
+>>>>>>> Stashed changes
 #########################################################
 # Define a PyTorch Lightning module to streamline training
 class Lit_MoEPRS(pl.LightningModule):
@@ -155,8 +231,14 @@ class Lit_MoEPRS(pl.LightningModule):
                  lb_coef=0.0,        # 0.0 = disable load-balancing aux loss
                  eps=1e-12,
 
+<<<<<<< Updated upstream
                  use_ard_bias = True,
                  use_global_head = True):
+=======
+                 use_per_expert_bias = True,
+                 use_global_head = True,
+                 global_head_bias=True):
+>>>>>>> Stashed changes
         """
         A PyTorch Lightning module for training a mixture of experts model.
 
@@ -225,9 +307,15 @@ class Lit_MoEPRS(pl.LightningModule):
         "group shrinkage" / ARD mechanism: kappa acts like an on/off knob for the whole bias block, makes the model more robust by
         keeping the model parsimonious unless intercept differences are clearly supported by the data.
         '''
+<<<<<<< Updated upstream
         self.use_ard_bias = use_ard_bias
 
         if self.use_ard_bias:
+=======
+        self.use_per_expert_bias = use_per_expert_bias
+
+        if self.use_per_expert_bias:
+>>>>>>> Stashed changes
             self.expert_bias = nn.Parameter(torch.zeros(self.n_experts))   # b_k
             self.expert_bias_log_scale = nn.Parameter(torch.tensor(-5.0))  # kappa ~ softplus(-5)
 
@@ -266,10 +354,19 @@ class Lit_MoEPRS(pl.LightningModule):
 
         # global covariate head + intercept
         self.use_global_head = use_global_head
+<<<<<<< Updated upstream
         if self.use_global_head:
             self.global_in_dim = len(group_getitem_cols.get('global_input',
                                                             group_getitem_cols['gate_input']))
             self.global_head = nn.Linear(self.global_in_dim, 1, bias=True)
+=======
+        self.global_head_bias = global_head_bias
+
+        if self.use_global_head:
+            self.global_in_dim = len(group_getitem_cols.get('global_input',
+                                                            group_getitem_cols['gate_input']))
+            self.global_head = nn.Linear(self.global_in_dim, 1, bias=self.global_head_bias)
+>>>>>>> Stashed changes
         else:
             self.global_in_dim = 0
             self.global_head = None
@@ -292,6 +389,12 @@ class Lit_MoEPRS(pl.LightningModule):
             self.metrics["likelihood_mixture_sigma"] = (
                 lambda w, yhat, y: gaussian_moe_nll(w, yhat, y, self.sigma2, eps=self.eps)
             )
+<<<<<<< Updated upstream
+=======
+            # self.metrics["likelihood_mixture_sigma"] = (
+                # lambda w, yhat, y: gaussian_moe_loss_exp_weighted(w, yhat, y, self.sigma2, eps=self.eps)
+            # )
+>>>>>>> Stashed changes
 
     @property
     def n_experts(self):
@@ -316,11 +419,37 @@ class Lit_MoEPRS(pl.LightningModule):
     @property
     def expert_bias_scale(self):
         # kappa >= 0, smooth; starts near ~softplus(-5) ~ 0.0067
+<<<<<<< Updated upstream
         if not getattr(self, "use_ard_bias", False):
+=======
+        if not getattr(self, "use_per_expert_bias", False):
+>>>>>>> Stashed changes
             # scalar zero on correct device
             return torch.zeros((), device=self.device)
         return torch.nn.functional.softplus(self.expert_bias_log_scale) + self.expert_bias_scale_floor
 
+<<<<<<< Updated upstream
+=======
+    @property
+    def expert_bias_centered(self):
+        """
+        Enforce identifiability when BOTH:
+          - global head has a bias (global intercept)
+          - per-expert biases (in the form of ARD) are used
+
+        Then we center expert biases so sum_k b_k = 0.
+        """
+        if not getattr(self, "use_per_expert_bias", False):
+            return None
+
+        b = self.expert_bias 
+
+        # Only center when the model actually has a global intercept to absorb the mean shift
+        if self.use_global_head and self.global_head is not None and self.global_head_bias:
+            b = b - b.mean()
+
+        return b
+>>>>>>> Stashed changes
 
     def batch_step(self, batch, batch_idx):
 
@@ -347,10 +476,18 @@ class Lit_MoEPRS(pl.LightningModule):
         total = losses[self.loss]
 
         # ----- Regularize shared bias scale and bias vector -----
+<<<<<<< Updated upstream
         # Keeps kappa ~ 0 unless the data really wants expert intercepts
         if self.use_ard_bias:
             scale_prior = self.expert_bias_scale_prior * (self.expert_bias_log_scale ** 2)
             bias_prior  = self.expert_bias_l2 * (self.expert_bias ** 2).mean()
+=======
+        # Keeps kappa ~ 0 unless the data has evidence that it benefits from additional expert intercepts
+        if self.use_per_expert_bias:
+            scale_prior = self.expert_bias_scale_prior * (self.expert_bias_log_scale ** 2)
+            b = self.expert_bias_centered
+            bias_prior  = self.expert_bias_l2 * (b ** 2).mean()
+>>>>>>> Stashed changes
 
             total = total + scale_prior + bias_prior
 
@@ -421,6 +558,7 @@ class Lit_MoEPRS(pl.LightningModule):
                           for i, expert_scaler in enumerate(self.expert_scaler)],
                          dim=1)
         
+<<<<<<< Updated upstream
         # ----- Add global covariate head + intercept -----
         if self.use_global_head and (self.global_head is not None):
             global_in = batch.get('global_input', batch['gate_input'])    
@@ -435,6 +573,47 @@ class Lit_MoEPRS(pl.LightningModule):
 
 
         return preds
+=======
+        #global covariate head and intercepts
+        if self.family == "binomial":
+            # use logits and not probabilities for binomial family
+            logits = torch.cat([
+                expert_scaler.forward(
+                    batch['experts'][:, i],
+                    covar=expert_covariates,
+                    return_logits=True
+                )
+                for i, expert_scaler in enumerate(self.expert_scaler)
+            ], dim=1)  # (N,K)
+
+            if self.use_global_head and (self.global_head is not None):
+                global_in = batch.get('global_input', batch['gate_input'])
+                g = self.global_head(global_in).squeeze(-1)          # (N,)
+                logits = logits + g.unsqueeze(1)                     # broadcast to (N,K)
+
+            if self.use_per_expert_bias:
+                kappa = self.expert_bias_scale
+                b = self.expert_bias_centered
+                logits = logits + (kappa * b).view(1, -1)
+
+            # finally convert to probabilities once
+            probs = torch.sigmoid(logits)
+            return probs
+        else: 
+            if self.use_global_head and (self.global_head is not None):
+                global_in = batch.get('global_input', batch['gate_input'])    
+                g = self.global_head(global_in).squeeze(-1)                    
+                g = g.unsqueeze(1).expand(-1, preds.size(1))                   
+                preds = preds + g
+
+            if self.use_per_expert_bias:
+                kappa = self.expert_bias_scale                      # scalar
+                b = self.expert_bias_centered
+                preds = preds + (kappa * b).view(1, -1)   # broadcast to (N, K)
+
+
+            return preds
+>>>>>>> Stashed changes
 
     def _current_tau(self):
         # if no trainer, default to final value
@@ -591,6 +770,7 @@ class GateModel(nn.Module):
                  n_experts,
                  hidden_layers=None,
                  add_batch_norm=True,
+                 add_layer_norm=False,
                  activation=nn.ReLU,
                  final_activation="softmax"):
 
@@ -608,6 +788,11 @@ class GateModel(nn.Module):
 
                 if add_batch_norm:
                     layers.append(nn.BatchNorm1d(layer_dim))
+<<<<<<< Updated upstream
+=======
+                elif add_layer_norm:
+                    layers.append(nn.LayerNorm(layer_dim))
+>>>>>>> Stashed changes
 
                 layers.append(activation())
                 input_dim = layer_dim
@@ -645,7 +830,7 @@ class LinearScaler(nn.Module):
         self.linear_model = nn.Linear(n_covar + 1, 1, bias=bias)
         self.family = family
 
-    def forward(self, prs, covar=None):
+    def forward(self, prs, covar=None, return_logits=False):
 
         if len(prs.shape) < 2:
             prs = prs.reshape(-1, 1)
@@ -657,8 +842,11 @@ class LinearScaler(nn.Module):
 
         if self.family == "gaussian":
             return pred
-        else:
-            return torch.sigmoid(pred)
+
+        if return_logits:
+            return pred
+        return torch.sigmoid(pred)
+
 
 
 def get_weighted_batch_sampler(dataset):
@@ -731,7 +919,11 @@ def train_model(lit_model, dataset, max_epochs=100, prop_validation=0.2, batch_s
                 weigh_samples=False, seed=8, split_seed=8, ancestry_balance_lambda=0.3):
 
     #deterministic for reproducibility
+<<<<<<< Updated upstream
     make_deterministic(seed)
+=======
+    # make_deterministic(seed)
+>>>>>>> Stashed changes
 
     dataset.set_backend("torch")
     
@@ -742,8 +934,17 @@ def train_model(lit_model, dataset, max_epochs=100, prop_validation=0.2, batch_s
     else:
         stratify = None
 
+    # split
     dataset.standardize_data()
+    train_idx, validation_idx = train_test_split(
+        np.arange(dataset.N),
+        test_size=prop_validation,
+        shuffle=True,
+        stratify=stratify,
+        random_state=split_seed
+    )
 
+<<<<<<< Updated upstream
     train_idx, validation_idx = train_test_split(np.arange(dataset.N),
                                                  test_size=prop_validation,
                                                  shuffle=True,
@@ -751,20 +952,28 @@ def train_model(lit_model, dataset, max_epochs=100, prop_validation=0.2, batch_s
                                                  random_state=split_seed)
     g = torch.Generator(device='cpu')
     g.manual_seed(seed)
+=======
+    # cache once AFTER standardization
+    dataset.cache_data_matrix()
+>>>>>>> Stashed changes
 
-    training_dataset = Subset(dataset, train_idx)
-    validation_dataset = Subset(dataset, validation_idx)
+    training_dataset = IndexSubset(dataset, train_idx)
+    validation_dataset = IndexSubset(dataset, validation_idx)
 
     if batch_size is not None:
-        batch_size = min(batch_size, train_idx.shape[0], validation_idx.shape[0])
+        batch_size = min(batch_size, len(training_dataset), len(validation_dataset))
 
+    # samplers (your existing helpers should still work because IndexSubset has .dataset and .indices)
     if dataset.phenotype_likelihood == "binomial" and weigh_samples:
         # (if you still want phenotype weighting sometimes)
         train_sampler = get_weighted_batch_sampler(training_dataset)
         validation_sampler = get_weighted_batch_sampler(validation_dataset)
     else:
         if ancestry_balance_lambda is not None:
+<<<<<<< Updated upstream
             # Soft ancestry balancing
+=======
+>>>>>>> Stashed changes
             train_sampler = get_ancestry_balanced_sampler(
                 training_dataset,
                 balance_lambda=ancestry_balance_lambda,
@@ -773,6 +982,7 @@ def train_model(lit_model, dataset, max_epochs=100, prop_validation=0.2, batch_s
             train_sampler = None
         validation_sampler = None
 
+<<<<<<< Updated upstream
     training_dataloader = DataLoader(training_dataset,
                                      batch_size=batch_size or train_idx.shape[0],
                                      shuffle=train_sampler is None,
@@ -782,6 +992,45 @@ def train_model(lit_model, dataset, max_epochs=100, prop_validation=0.2, batch_s
                                        batch_size=batch_size or validation_idx.shape[0],
                                        shuffle=False,
                                        sampler=validation_sampler,num_workers=4)
+=======
+    # IMPORTANT: collate_fn does the vectorized fetch
+    collate = dataset.get_batch
+
+    cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", "8"))
+
+    # Good default for your cached+vectorized pipeline:
+    train_workers = 3
+    val_workers = 1
+    prefetch_factor = 1
+
+    configure_cpu_threads(cpus_per_task=cpus, num_workers=(train_workers+val_workers), interop_threads=1)
+
+    training_dataloader = DataLoader(
+        training_dataset,
+        batch_size=batch_size or len(training_dataset),
+        shuffle=(train_sampler is None),
+        sampler=train_sampler,
+        num_workers=train_workers,              
+        collate_fn=collate,
+        worker_init_fn=dataloader_worker_init_fn,
+        persistent_workers=(train_workers > 0),  
+        prefetch_factor = prefetch_factor,   
+        pin_memory = False
+    )
+
+    validation_dataloader = DataLoader(
+        validation_dataset,
+        batch_size=batch_size or len(validation_dataset),
+        shuffle=False,
+        sampler=validation_sampler,
+        num_workers=val_workers,
+        collate_fn=collate,
+        worker_init_fn=dataloader_worker_init_fn,
+        persistent_workers=(val_workers > 0),
+        prefetch_factor = prefetch_factor,   
+        pin_memory = False
+    )
+>>>>>>> Stashed changes
 
     ckpt_callback = pl.callbacks.ModelCheckpoint(
                                 save_top_k=1,
@@ -799,7 +1048,13 @@ def train_model(lit_model, dataset, max_epochs=100, prop_validation=0.2, batch_s
 
     trainer = pl.Trainer(max_epochs=max_epochs,
                          deterministic=True,
+<<<<<<< Updated upstream
                          logger = logger,
+=======
+                        #  logger = logger,
+                        logger = False,
+                        num_sanity_val_steps=0,
+>>>>>>> Stashed changes
                          callbacks=[
                             pl.callbacks.EarlyStopping(
                                 monitor="val_loss",

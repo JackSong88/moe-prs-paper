@@ -11,6 +11,10 @@ from PRSDataset import PRSDataset
 from magenpy.utils.system_utils import makedir
 import argparse
 from moe_pytorch import make_deterministic
+<<<<<<< Updated upstream
+=======
+from utils import Timer, PeakMemory
+>>>>>>> Stashed changes
 
 
 def train_baseline_linear_models(dataset,
@@ -24,6 +28,8 @@ def train_baseline_linear_models(dataset,
     print(f"> Training baseline models for {dataset.phenotype_col} with {dataset.N} samples...")
 
     base_models = dict()
+    runtimes = dict()
+    mem_peaks = {}
 
     base_models['MultiPRS'] = MultiPRS(prs_dataset=dataset,
                                        expert_cols=dataset.prs_cols,
@@ -33,7 +39,11 @@ def train_baseline_linear_models(dataset,
                                        penalty_type=penalty_type,
                                        penalty=penalty)
 
-    base_models['MultiPRS'].fit()
+    with Timer() as timer, PeakMemory(interval=0.2, include_children=True) as mem:
+        base_models['MultiPRS'].fit()
+
+    runtimes['MultiPRS'] = timer.minutes
+    mem_peaks['MultiPRS'] = mem.peak_rss_gb
 
     base_models['Covariates'] = MultiPRS(prs_dataset=dataset,
                                          covariates_cols=dataset.covariates_cols,
@@ -41,8 +51,11 @@ def train_baseline_linear_models(dataset,
                                          class_weights=class_weights,
                                          penalty_type=penalty_type,
                                          penalty=penalty)
+    with Timer() as timer, PeakMemory(interval=0.2, include_children=True) as mem:
+        base_models['Covariates'].fit()
 
-    base_models['Covariates'].fit()
+    runtimes['Covariates'] = timer.minutes
+    mem_peaks['Covariates'] = mem.peak_rss_gb
 
     for i, pgs_id in enumerate(dataset.prs_cols):
 
@@ -54,9 +67,13 @@ def train_baseline_linear_models(dataset,
                                                        penalty_type=penalty_type,
                                                        penalty=penalty)
 
-        base_models[f'{pgs_id}-covariates'].fit()
+        with Timer() as timer, PeakMemory(interval=0.2, include_children=True) as mem:
+            base_models[f'{pgs_id}-covariates'].fit()
 
-    return base_models
+        runtimes[f'{pgs_id}-covariates'] = timer.minutes
+        mem_peaks[f'{pgs_id}-covariates'] = mem.peak_rss_gb
+
+    return base_models, runtimes, mem_peaks
 
 
 def train_moe_model_numpy(dataset,
@@ -69,6 +86,10 @@ def train_moe_model_numpy(dataset,
     print(f"> Training MoE model for {dataset.phenotype_col} with {dataset.N} samples...")
 
     dataset.set_backend("numpy")
+
+    moe_models = dict()
+    runtimes = dict()
+    mem_peaks = {}
 
     moe = MoEPRS(prs_dataset=dataset,
                  expert_cols=dataset.prs_cols,
@@ -83,7 +104,11 @@ def train_moe_model_numpy(dataset,
                  svd=args.svd,
                  n_jobs=min(4, dataset.n_prs_models))
 
-    moe.fit()
+    with Timer() as timer, PeakMemory(interval=0.2, include_children=True) as mem:
+        moe.fit()
+    
+    runtimes['MoE'] = timer.minutes
+    mem_peaks['MoE'] = mem.peak_rss_gb
 
     moe_global_int = MoEPRS(prs_dataset=dataset,
                  expert_cols=dataset.prs_cols,
@@ -98,7 +123,15 @@ def train_moe_model_numpy(dataset,
                  svd=args.svd,
                  n_jobs=min(4, dataset.n_prs_models))
 
+<<<<<<< Updated upstream
     moe_global_int.fit()
+=======
+    with Timer() as timer, PeakMemory(interval=0.2, include_children=True) as mem:
+        moe_global_int.fit()
+    
+    runtimes['MoE-global-int'] = timer.minutes
+    mem_peaks['MoE-global-int'] = mem.peak_rss_gb
+>>>>>>> Stashed changes
 
     moe_cfg = MoEPRS(prs_dataset=dataset,
                 expert_cols=dataset.prs_cols,
@@ -112,21 +145,46 @@ def train_moe_model_numpy(dataset,
                 expert_penalty=expert_penalty,
                 svd=args.svd,
                 n_jobs=min(4, dataset.n_prs_models))
+<<<<<<< Updated upstream
     moe_cfg.fit()
+=======
+    
+    with Timer() as timer, PeakMemory(interval=0.2, include_children=True) as mem:
+        moe_cfg.fit()
+    
+    runtimes['MoE-CFG'] = timer.minutes
+    mem_peaks['MoE-CFG'] = mem.peak_rss_gb
+>>>>>>> Stashed changes
     
     if not args.simplify:
         # Try the same but with two-step fitting:
         moe_global_int_two_step = copy.deepcopy(moe_global_int)
+<<<<<<< Updated upstream
         moe_global_int_two_step.two_step_fit()
         
     if args.simplify:
         res = {
+=======
+        
+        with Timer() as timer, PeakMemory(interval=0.2, include_children=True) as mem:
+            moe_global_int_two_step.two_step_fit()
+        
+        runtimes['MoE-global-int-two-step'] = timer.minutes
+        mem_peaks['MoE-global-int-two-step'] = mem.peak_rss_gb
+        
+    if args.simplify:
+        moe_models = {
+>>>>>>> Stashed changes
             'MoE-CFG': moe_cfg,
             'MoE': moe,
             'MoE-global-int': moe_global_int,
         }
     else:
+<<<<<<< Updated upstream
         res = {
+=======
+        moe_models = {
+>>>>>>> Stashed changes
             'MoE-CFG': moe_cfg,
             'MoE': moe,
             'MoE-global-int': moe_global_int,
@@ -148,7 +206,12 @@ def train_moe_model_numpy(dataset,
                                expert_penalty=expert_penalty,
                                svd=args.svd,
                                n_jobs=min(4, dataset.n_prs_models))
-        moe_fix_resid.fit()
+        
+        with Timer() as timer, PeakMemory(interval=0.2, include_children=True) as mem:
+            moe_fix_resid.fit()
+        
+        runtimes['MoE-fixed-resid'] = timer.minutes
+        mem_peaks['MoE-fixed-resid'] = mem.peak_rss_gb
 
         moe_fix_resid_global_int = MoEPRS(prs_dataset=dataset,
                                expert_cols=dataset.prs_cols,
@@ -162,16 +225,26 @@ def train_moe_model_numpy(dataset,
                                expert_penalty=expert_penalty,
                                svd=args.svd,
                                n_jobs=min(4, dataset.n_prs_models))
-        moe_fix_resid_global_int.fit()
+        
+        with Timer() as timer, PeakMemory(interval=0.2, include_children=True) as mem:
+            moe_fix_resid_global_int.fit()
+        
+        runtimes['MoE-fixed-resid-global-int'] = timer.minutes
+        mem_peaks['MoE-fixed-resid-global-int'] = mem.peak_rss_gb
 
-        res['MoE-fixed-resid'] = moe_fix_resid
-        res['MoE-fixed-resid-global-int'] = moe_fix_resid_global_int
+        moe_models['MoE-fixed-resid'] = moe_fix_resid
+        moe_models['MoE-fixed-resid-global-int'] = moe_fix_resid_global_int
 
         # Try two-step fitting for the fixed residuals + global intercept model:
         moe_fix_resid_global_int_two_step = copy.deepcopy(moe_fix_resid_global_int)
-        moe_fix_resid_global_int_two_step.two_step_fit()
+        
+        with Timer() as timer, PeakMemory(interval=0.2, include_children=True) as mem:
+            moe_fix_resid_global_int_two_step.two_step_fit()
+        
+        runtimes['MoE-fixed-resid-global-int-two-step'] = timer.minutes
+        mem_peaks['MoE-fixed-resid-global-int-two-step'] = mem.peak_rss_gb
 
-        res['MoE-fixed-resid-global-int-two-step'] = moe_fix_resid_global_int_two_step
+        moe_models['MoE-fixed-resid-global-int-two-step'] = moe_fix_resid_global_int_two_step
 
         """
         moe_huber = MoEPRS(prs_dataset=dataset,
@@ -190,7 +263,7 @@ def train_moe_model_numpy(dataset,
         res['MoE-huber'] = moe_huber
         """
 
-    return res
+    return moe_models, runtimes, mem_peaks
 
 
 def train_moe_models_torch(dataset,
@@ -211,9 +284,20 @@ def train_moe_models_torch(dataset,
                             hard_ste=False,                        
                             lb_coef=0.00,                         
                             ent_coef=0.03,
+<<<<<<< Updated upstream
                             ancestry_balance_lambda=None,                         
                             use_ard_bias=True,
                             use_global_head=True):
+=======
+                            ent_coef_end=None, 
+                            ent_warm_epochs=0,                   
+                            ent_decay_epochs=0,                  
+                            ancestry_balance_lambda=None,                         
+                            use_per_expert_bias=True,
+                            use_global_head=True,
+                            global_head_bias=True
+                            ):
+>>>>>>> Stashed changes
 
     dataset.set_backend("torch")
 
@@ -246,6 +330,7 @@ def train_moe_models_torch(dataset,
         tau_end=tau_end,                           
         hard_ste=hard_ste,                        
         lb_coef=lb_coef,                          
+<<<<<<< Updated upstream
         ent_coef=ent_coef,                         
         use_ard_bias=use_ard_bias,
         use_global_head=use_global_head,
@@ -259,6 +344,30 @@ def train_moe_models_torch(dataset,
                        weigh_samples=weigh_samples,
                        seed = seed, split_seed=seed,
                        ancestry_balance_lambda=ancestry_balance_lambda)
+=======
+        ent_coef=ent_coef,
+        ent_coef_end=ent_coef_end, 
+        ent_warm_epochs=ent_warm_epochs,                   
+        ent_decay_epochs=ent_decay_epochs,                         
+        use_per_expert_bias=use_per_expert_bias,
+        use_global_head=use_global_head,
+        global_head_bias=global_head_bias,
+    )
+
+    # Train with PyTorch Lightning:
+    with Timer() as t, PeakMemory(interval=0.2, include_children=True, track_gpu=True) as mem:
+        _, m = train_model(m,
+                        dataset,
+                        max_epochs=max_epochs,
+                        batch_size=batch_size,
+                        weigh_samples=weigh_samples,
+                        seed = seed, split_seed=seed,
+                        ancestry_balance_lambda=ancestry_balance_lambda)
+
+    m.runtime_minutes = t.minutes  # <-- attach to model for saving later 
+    m.peak_rss_gb = float(mem.peak_rss_gb)
+    m.peak_cuda_alloc_gb = float(mem.peak_cuda_alloc_gb)
+>>>>>>> Stashed changes
 
     return m
 
@@ -271,6 +380,7 @@ def train_all_models(dataset,
                      moe_pytorch_kwargs=None):
 
     trained_models = {}
+<<<<<<< Updated upstream
     
     if not args.pytorch_only:
         if not skip_baseline:
@@ -308,9 +418,70 @@ def train_all_models(dataset,
         )
 
         trained_models['MoE-PyTorch'] = m_pt
+=======
+    runtimes = {}
+    memory_peaks = {}
 
-    return trained_models
+    
+    if not args.pytorch_only:
+        if not skip_baseline:
+            bm, br, bm_mem = train_baseline_linear_models(dataset, **baseline_kwargs)
+            trained_models.update(bm)
+            runtimes.update(br)
+            memory_peaks.update(bm_mem)
 
+        if not skip_moe:
+            mm, mr, mm_mem = train_moe_model_numpy(dataset, **moe_kwargs)
+            trained_models.update(mm)
+            runtimes.update(mr)
+            memory_peaks.update(mm_mem)
+
+    if not args.skip_moe_pytorch:
+        
+        # Train SGD MoE with residual variance estimation if phenotype family is gaussian
+        pt_loss = "likelihood_mixture_sigma" if dataset.phenotype_likelihood == "gaussian" else "likelihood_mixture2"
+        # pt_loss = "likelihood_mixture2"
+>>>>>>> Stashed changes
+
+        #-----------------------------
+        m_pt = train_moe_models_torch(
+            dataset,
+            loss=pt_loss,
+            optimizer="Adam",
+            gate_model_layers=None,
+            gate_add_batch_norm=False,
+            learning_rate=1e-3,
+            weight_decay=0,          
+            max_epochs=500,            
+            batch_size=2048,          
+            seed=args.seed,
+            topk_k=None,                           # Top-k routing       
+            tau_start=1.5,                         # Temperature schedule starting value
+            tau_end=1.0,                           # Ending temperature value
+            hard_ste=False,                        # irrelevant when no top-k
+            lb_coef=0.00,                          # Load balancing coefficient
+            ent_coef=0.05,                         # Entropy regularization coefficient
+            ent_coef_end=0.0, 
+            ent_warm_epochs=10,                    # Number of epochs to warm up entropy regularization
+            ent_decay_epochs=90,                   # Number of epochs to decay entropy regularization
+            ancestry_balance_lambda=None,          # Ancestry balancing sampling coefficient 
+            use_per_expert_bias=False,             # per expert bias terms
+            add_covariates_to_experts=False,       # per expert covariate effects
+            use_global_head=True,                  # global covariate head
+            global_head_bias=True,                 # global covariate head with bias
+        )
+
+<<<<<<< Updated upstream
+=======
+        trained_models['MoE-PyTorch'] = m_pt
+        # runtime is stored on the model:
+        if hasattr(m_pt, "runtime_minutes"):
+            runtimes['MoE-PyTorch'] = float(m_pt.runtime_minutes)
+        memory_peaks['MoE-PyTorch'] = getattr(m_pt, "peak_rss_gb", None)
+
+    return trained_models, runtimes, memory_peaks
+
+>>>>>>> Stashed changes
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Train baseline and MoE models.')
@@ -361,9 +532,9 @@ if __name__ == '__main__':
     if len(args.moe_kwargs) > 0:
         moe_kwargs = {k: v for k, v in [kw.split('=') for kw in args.moe_kwargs.split(',')] if v}
 
-    trained_models = train_all_models(prs_dataset, baseline_kwargs, moe_kwargs,
-                                      skip_baseline=args.skip_baseline,
-                                      skip_moe=args.skip_moe)
+    trained_models, model_runtimes, model_mem_peaks = train_all_models(prs_dataset, baseline_kwargs, moe_kwargs,
+                                                        skip_baseline=args.skip_baseline,
+                                                        skip_moe=args.skip_moe)
 
     output_dir = osp.dirname(args.dataset_path).replace('harmonized_data', 'trained_models')
     dataset_name = osp.basename(args.dataset_path).replace('.pkl', '')
@@ -382,10 +553,26 @@ if __name__ == '__main__':
     print("> Saving trained models to:\n\t", output_dir)
 
     for model_name, model in trained_models.items():
+<<<<<<< Updated upstream
+=======
+        runtime_min = model_runtimes.get(model_name, None)
+
+>>>>>>> Stashed changes
         out = osp.join(output_dir, f'{model_name}.pkl')
         try:
             model.save(out)
             print(f"Saved NumPy model: {model_name}")
+<<<<<<< Updated upstream
+=======
+
+            if runtime_min is not None:
+                payload = {"Runtime_min": runtime_min}
+                peak_gb = model_mem_peaks.get(model_name, None)
+                if peak_gb is not None:
+                    payload["PeakRSS_GB"] = float(peak_gb)
+                with open(osp.join(output_dir, f"{model_name}_runtime.json"), "w") as f:
+                    json.dump(payload, f)
+>>>>>>> Stashed changes
         except Exception:
             #pytorch models
             pt_path = osp.join(output_dir, f"{model_name}.pt")
@@ -411,11 +598,21 @@ if __name__ == '__main__':
                 "ent_warm_epochs": getattr(model, "ent_warm_epochs", 0),
                 "ent_decay_epochs": getattr(model, "ent_decay_epochs", 0),
 
+<<<<<<< Updated upstream
                 "use_ard_bias": getattr(model, "use_ard_bias", False),
+=======
+                "use_per_expert_bias": getattr(model, "use_per_expert_bias", False),
+>>>>>>> Stashed changes
                 "use_global_head": getattr(model, "use_global_head", False),
                 "min_sigma2": float(getattr(model, "min_sigma2", 0.0)) if hasattr(model, "min_sigma2") else None,
                 "expert_bias_scale_floor": float(getattr(model, "expert_bias_scale_floor", 0.0)),
                 "has_expert_covariates": ("expert_covariates" in getattr(model, "group_getitem_cols", {})),
+<<<<<<< Updated upstream
+=======
+                "global_head_bias": (
+                    getattr(model, "global_head", None) is not None and getattr(model.global_head, "bias", None) is not None
+                ),
+>>>>>>> Stashed changes
             }
 
             # ---- Save state_dict + config inside one checkpoint ----
@@ -425,6 +622,17 @@ if __name__ == '__main__':
             }, pt_path)
             print(f"Saved PyTorch model checkpoint: {model_name}")
 
+<<<<<<< Updated upstream
+=======
+            if runtime_min is not None:
+                payload = {"Runtime_min": runtime_min}
+                peak_gb = model_mem_peaks.get(model_name, None)
+                if peak_gb is not None:
+                    payload["PeakRSS_GB"] = float(peak_gb)
+                with open(osp.join(output_dir, f"{model_name}_runtime.json"), "w") as f:
+                    json.dump(payload, f)
+
+>>>>>>> Stashed changes
             # ---- Save scaler used at training time on the training dataset (same scaler will be used later for evaluation)----
             scaler_path = osp.join(output_dir, "MoE-PyTorch.scaler.pkl")
             with open(scaler_path, "wb") as f:

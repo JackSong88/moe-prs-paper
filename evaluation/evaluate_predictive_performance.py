@@ -20,6 +20,10 @@ from moe import MoEPRS
 from baseline_models import MultiPRS, AncestryWeightedPRS
 import torch
 from moe_pytorch import Lit_MoEPRS
+<<<<<<< Updated upstream
+=======
+from moe_pytorch_inference import load_model_any
+>>>>>>> Stashed changes
 
 
 from eval_utils import (
@@ -58,6 +62,7 @@ def average_precision_at_top_percentile(y_true, y_pred, percentile=0.05):
 
     return ap
 
+<<<<<<< Updated upstream
 
 class TorchMoEWrapper:
     ''' inference wrapper around a trained Lit_MoEPRS model '''
@@ -156,6 +161,8 @@ def load_lit_from_pt(prs_dataset, pt_path):
 
     return lit
 
+=======
+>>>>>>> Stashed changes
 def stratified_evaluation(prs_dataset,
                           trained_models=None,
                           cat_group_cols=None,
@@ -391,6 +398,7 @@ if __name__ == '__main__':
         model_prefix = split_fname[-3] + '/' + split_fname[-2] + ':'
         model_name = model_prefix + 'MoE-PyTorch'
 
+<<<<<<< Updated upstream
         # rebuild Lightning module and wrap it to expose .predict(prs_dataset)
         lit = load_lit_from_pt(prs_dataset, f)
 
@@ -400,6 +408,11 @@ if __name__ == '__main__':
         trained_models[model_name] = TorchMoEWrapper(
             lit_model=lit,
             scaler_path=model_dir
+=======
+        trained_models[model_name] = load_model_any(
+            prs_dataset,
+            f,
+>>>>>>> Stashed changes
         )
 
     if len(trained_models) == 0:

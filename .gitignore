@@ -52,3 +52,5 @@ pip-delete-this-directory.txt
 *.npz
 *.log
 **/temp
+checkpoints/
+log/

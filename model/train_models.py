@@ -16,76 +16,70 @@ from moe_pytorch import make_deterministic, Lit_MoEPRS, train_model
 from utils import Timer
 import copy
 
-def train_baseline_linear_models(
-    dataset, penalty_type=None, penalty=0.0, class_weights=None, add_intercept=True
-):
+
+def train_baseline_linear_models(dataset,
+                                 penalty_type=None,
+                                 penalty=0.,
+                                 class_weights=None,
+                                 add_intercept=True):
+
     dataset.set_backend("numpy")
 
-    print(
-        f"> Training baseline models for {dataset.phenotype_col} with {dataset.N} samples..."
-    )
+    print(f"> Training baseline models for {dataset.phenotype_col} with {dataset.N} samples...")
 
     base_models = dict()
     runtimes = dict()
 
-    base_models["MultiPRS"] = MultiPRS(
-        prs_dataset=dataset,
-        expert_cols=dataset.prs_cols,
-        covariates_cols=dataset.covariates_cols,
-        add_intercept=add_intercept,
-        class_weights=class_weights,
-        penalty_type=penalty_type,
-        penalty=penalty,
-    )
+    base_models['MultiPRS'] = MultiPRS(prs_dataset=dataset,
+                                       expert_cols=dataset.prs_cols,
+                                       covariates_cols=dataset.covariates_cols,
+                                       add_intercept=add_intercept,
+                                       class_weights=class_weights,
+                                       penalty_type=penalty_type,
+                                       penalty=penalty)
 
     with Timer() as timer:
-        base_models["MultiPRS"].fit()
+        base_models['MultiPRS'].fit()
 
-    runtimes["MultiPRS"] = timer.minutes
+    runtimes['MultiPRS'] = timer.minutes
 
-    base_models["Covariates"] = MultiPRS(
-        prs_dataset=dataset,
-        covariates_cols=dataset.covariates_cols,
-        add_intercept=add_intercept,
-        class_weights=class_weights,
-        penalty_type=penalty_type,
-        penalty=penalty,
-    )
+    base_models['Covariates'] = MultiPRS(prs_dataset=dataset,
+                                         covariates_cols=dataset.covariates_cols,
+                                         add_intercept=add_intercept,
+                                         class_weights=class_weights,
+                                         penalty_type=penalty_type,
+                                         penalty=penalty)
     with Timer() as timer:
-        base_models["Covariates"].fit()
+        base_models['Covariates'].fit()
 
-    runtimes["Covariates"] = timer.minutes
+    runtimes['Covariates'] = timer.minutes
 
     for i, pgs_id in enumerate(dataset.prs_cols):
-        base_models[f"{pgs_id}-covariates"] = MultiPRS(
-            prs_dataset=dataset,
-            expert_cols=pgs_id,
-            covariates_cols=dataset.covariates_cols,
-            add_intercept=add_intercept,
-            class_weights=class_weights,
-            penalty_type=penalty_type,
-            penalty=penalty,
-        )
+
+        base_models[f'{pgs_id}-covariates'] = MultiPRS(prs_dataset=dataset,
+                                                       expert_cols=pgs_id,
+                                                       covariates_cols=dataset.covariates_cols,
+                                                       add_intercept=add_intercept,
+                                                       class_weights=class_weights,
+                                                       penalty_type=penalty_type,
+                                                       penalty=penalty)
 
         with Timer() as timer:
-            base_models[f"{pgs_id}-covariates"].fit()
+            base_models[f'{pgs_id}-covariates'].fit()
 
-        runtimes[f"{pgs_id}-covariates"] = timer.minutes
+        runtimes[f'{pgs_id}-covariates'] = timer.minutes
 
     return base_models, runtimes
 
 
-def train_moe_model_numpy(
-    dataset,
-    gate_penalty=0.0,
-    expert_penalty=0.0,
-    gate_add_intercept=True,
-    expert_add_intercept=True,
-    optimizer="L-BFGS-B",
-):
-    print(
-        f"> Training MoE model for {dataset.phenotype_col} with {dataset.N} samples..."
-    )
+def train_moe_model_numpy(dataset,
+                          gate_penalty=0.,
+                          expert_penalty=0.,
+                          gate_add_intercept=True,
+                          expert_add_intercept=True,
+                          optimizer='L-BFGS-B'):
+
+    print(f"> Training MoE model for {dataset.phenotype_col} with {dataset.N} samples...")
 
     dataset.set_backend("numpy")
 
@@ -256,83 +250,6 @@ def train_moe_models_torch(dataset,
                             fix_sigma2=False
                         ):
 
-    with Timer() as timer:
-        moe_models["MoE-global-int-two-step"] = moe_global_int_two_step.two_step_fit()
-
-    runtimes["MoE-global-int-two-step"] = timer.minutes
-
-    moe_cfg = MoEPRS(
-        prs_dataset=dataset,
-        expert_cols=dataset.prs_cols,
-        gate_input_cols=None,
-        global_covariates_cols=dataset.covariates_cols,
-        optimizer=optimizer,
-        fix_residuals=False,
-        gate_add_intercept=gate_add_intercept,
-        expert_add_intercept=False,  ## Check this?
-        gate_penalty=gate_penalty,
-        expert_penalty=expert_penalty,
-        n_jobs=min(4, dataset.n_prs_models),
-    )
-
-    with Timer() as timer:
-        moe_models["MoE-CFG"] = moe_cfg.fit()
-
-    runtimes["MoE-CFG"] = timer.minutes
-
-    if dataset.phenotype_likelihood != "binomial":
-        moe_fix_resid = MoEPRS(
-            prs_dataset=dataset,
-            expert_cols=dataset.prs_cols,
-            gate_input_cols=dataset.covariates_cols,
-            global_covariates_cols=dataset.covariates_cols,
-            optimizer=optimizer,
-            fix_residuals=True,
-            gate_add_intercept=gate_add_intercept,
-            expert_add_intercept=expert_add_intercept,
-            gate_penalty=gate_penalty,
-            expert_penalty=expert_penalty,
-            n_jobs=min(4, dataset.n_prs_models),
-        )
-
-        with Timer() as timer:
-            moe_models["MoE-fixed-resid"] = moe_fix_resid.fit()
-
-        runtimes["MoE-fixed-resid"] = timer.minutes
-
-        moe_fix_resid_global_int = MoEPRS(
-            prs_dataset=dataset,
-            expert_cols=dataset.prs_cols,
-            gate_input_cols=dataset.covariates_cols,
-            global_covariates_cols=dataset.covariates_cols,
-            optimizer=optimizer,
-            fix_residuals=True,
-            gate_add_intercept=gate_add_intercept,
-            expert_add_intercept=False,
-            gate_penalty=gate_penalty,
-            expert_penalty=expert_penalty,
-            n_jobs=min(4, dataset.n_prs_models),
-        )
-        with Timer() as timer:
-            moe_models["MoE-fixed-resid-global-int"] = moe_fix_resid_global_int.fit()
-
-        runtimes["MoE-fixed-resid-global-int"] = timer.minutes
-
-    return moe_models, runtimes
-
-
-def train_moe_models_torch(
-    dataset,
-    gate_model_layers=None,
-    add_covariates_to_experts=False,
-    loss="likelihood_mixture",
-    optimizer="Adam",
-    penalty=0.0,
-    learning_rate=1e-2,
-    max_epochs=100,
-    batch_size=None,
-    weigh_samples=False,
-):
     dataset.set_backend("torch")
 
     # Define which columns to fetch 
@@ -345,7 +262,7 @@ def train_moe_models_torch(
 
     # whether or not to have expert-specific covariates slopes
     if add_covariates_to_experts:
-        group_getitem_cols["expert_covariates"] = dataset.covariates_cols
+        group_getitem_cols['expert_covariates'] = dataset.covariates_cols
 
     dataset.set_group_getitem_cols(group_getitem_cols)
 
@@ -393,20 +310,20 @@ def train_moe_models_torch(
     return m
 
 
-def train_all_models(
-    dataset,
-    baseline_kwargs,
-    moe_kwargs,
-    skip_baseline=False,
-    skip_moe=False,
-    moe_pytorch_kwargs=None,
-    pytorch_only=False,
-    skip_moe_pytorch=False,
-    seed=8,
-):
+def train_all_models(dataset,
+                     baseline_kwargs,
+                     moe_kwargs,
+                     skip_baseline=False,
+                     skip_moe=False,    
+                     moe_pytorch_kwargs=None,
+                     pytorch_only=False,
+                     skip_moe_pytorch=False,
+                     seed=8):
+
     trained_models = {}
     runtimes = {}
 
+    
     if not pytorch_only:
         if not skip_baseline:
             bm, br = train_baseline_linear_models(dataset, **baseline_kwargs)
@@ -419,44 +336,44 @@ def train_all_models(
             runtimes.update(mr)
 
     if not skip_moe_pytorch:
-        # Use caller-provided kwargs if available; otherwise use your defaults
-        if moe_pytorch_kwargs is None:
-            moe_pytorch_kwargs = dict(
-                loss="likelihood_mixture2",
-                fix_sigma2=False,  # Train MoE-SGD with estimated sigma2 (when gaussian)
-                optimizer="Adam",
-                gate_model_layers=None,
-                gate_add_batch_norm=False,
-                gate_add_layer_norm=True,
-                learning_rate=1e-3,
-                weight_decay=0,
-                max_epochs=500,
-                batch_size=2048,
-                seed=seed,
-                topk_k=None,           # Top-k routing
-                tau_start=1.5,         # Temperature schedule starting value
-                tau_end=1.0,           # Ending temperature value
-                hard_ste=False,        # irrelevant when no top-k
-                lb_coef=0.00,          # Load balancing coefficient
-                ent_coef=0.05,         # Entropy regularization coefficient
-                ent_coef_end=0.0,
-                ent_warm_epochs=10,    # Warm-up epochs for entropy reg
-                ent_decay_epochs=90,   # Decay epochs for entropy reg
-                ancestry_balance_lambda=None,
-                use_per_expert_bias=False,
-                add_covariates_to_experts=False,
-                use_global_head=True,
-                global_head_bias=True,
-            )
+        pt_kwargs = dict(
+            loss="likelihood_mixture2",
+            fix_sigma2=False,                      # Train MoE-SGD with estimated sigma2 (when gaussian)
+            optimizer="Adam",
+            gate_model_layers=None,
+            gate_add_batch_norm=False,
+            gate_add_layer_norm=True,
+            learning_rate=1e-3,
+            weight_decay=0,          
+            max_epochs=500,            
+            batch_size=2048,          
+            seed=seed,
+            topk_k=None,                           # Top-k routing       
+            tau_start=1.5,                         # Temperature schedule starting value
+            tau_end=1.0,                           # Ending temperature value
+            hard_ste=False,                        # irrelevant when no top-k
+            lb_coef=0.00,                          # Load balancing coefficient
+            ent_coef=0.05,                         # Entropy regularization coefficient
+            ent_coef_end=0.0, 
+            ent_warm_epochs=10,                    # Number of epochs to warm up entropy regularization
+            ent_decay_epochs=90,                   # Number of epochs to decay entropy regularization
+            ancestry_balance_lambda=None,          # Ancestry balancing sampling coefficient 
+            use_per_expert_bias=False,             # per expert bias terms
+            add_covariates_to_experts=False,       # per expert covariate effects
+            use_global_head=True,                  # global covariate head
+            global_head_bias=True,                 # global covariate head with bias
+        )
 
-        m_pt = train_moe_models_torch(dataset, **moe_pytorch_kwargs)
+        if moe_pytorch_kwargs:
+            pt_kwargs.update(moe_pytorch_kwargs)
+
+        m_pt = train_moe_models_torch(dataset, **pt_kwargs)
 
         trained_models["MoE-PyTorch"] = m_pt
         if hasattr(m_pt, "runtime_minutes"):
             runtimes["MoE-PyTorch"] = float(m_pt.runtime_minutes)
 
     return trained_models, runtimes
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train baseline and MoE models.")
@@ -480,6 +397,13 @@ if __name__ == "__main__":
         type=str,
         default="",
         help="A comma-separated list of key-value pairs with the arguments for the MoE model.",
+    )
+    parser.add_argument(
+        "--moe-pytorch-kwargs",
+        dest="moe_pytorch_kwargs",
+        type=str,
+        default="",
+        help="Comma-separated key=value pairs for PyTorch MoE (e.g. max_epochs=500,learning_rate=1e-3,gate_add_layer_norm=True).",
     )
     parser.add_argument(
         "--residualize-phenotype",
@@ -548,17 +472,24 @@ if __name__ == "__main__":
     baseline_kwargs = {}
     if len(args.baseline_kwargs) > 0:
         baseline_kwargs = {
-            k: v
-            for k, v in [kw.split("=") for kw in args.baseline_kwargs.split(",")]
-            if v
+            k: v for k, v in [kw.split('=') for kw in args.baseline_kwargs.split(',')] if v
         }
+        
     moe_kwargs = {}
     if len(args.moe_kwargs) > 0:
         moe_kwargs = {
-            k: v for k, v in [kw.split("=") for kw in args.moe_kwargs.split(",")] if v
+            k: v for k, v in [kw.split('=') for kw in args.moe_kwargs.split(',')] if v
+        }
+        
+    moe_pytorch_kwargs = {}
+    if len(args.moe_pytorch_kwargs) > 0:
+        moe_pytorch_kwargs = {
+            k: v
+            for k, v in [kw.split("=") for kw in args.moe_pytorch_kwargs.split(",")]
+            if v
         }
 
-    trained_models, model_runtimes = train_all_models(
+    trained_models, model_runtimes= train_all_models(
         prs_dataset,
         baseline_kwargs,
         moe_kwargs,
@@ -566,6 +497,7 @@ if __name__ == "__main__":
         skip_moe=args.skip_moe,
         pytorch_only=args.pytorch_only,
         skip_moe_pytorch=args.skip_moe_pytorch,
+        moe_pytorch_kwargs=moe_pytorch_kwargs,
         seed=args.seed,
     )
 
@@ -717,4 +649,3 @@ if __name__ == "__main__":
                         print(f"Saved gate weights: {weights_path}")
                 except Exception as e:
                     print(f"Could not save gate weights for {model_name}: {e}")
-

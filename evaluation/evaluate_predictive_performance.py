@@ -20,11 +20,7 @@ from moe import MoEPRS
 from baseline_models import MultiPRS, AncestryWeightedPRS
 import torch
 from moe_pytorch import Lit_MoEPRS
-<<<<<<< Updated upstream
-=======
 from moe_pytorch_inference import load_model_any
->>>>>>> Stashed changes
-
 
 from eval_utils import (
     generate_predictions,
@@ -62,107 +58,6 @@ def average_precision_at_top_percentile(y_true, y_pred, percentile=0.05):
 
     return ap
 
-<<<<<<< Updated upstream
-
-class TorchMoEWrapper:
-    ''' inference wrapper around a trained Lit_MoEPRS model '''
-    def __init__(self, lit_model, scaler_path=None):
-        self.lit_model = lit_model
-        self.lit_model.eval()
-        self.scaler_path = scaler_path
-
-    def predict(self, prs_dataset):
-        # expected column groups used during training
-        expected = self.lit_model.group_getitem_cols
-
-        # Ensure the dataset exposes the same group_getitem_cols interface
-        # required by the trained Lightning model
-        if not getattr(prs_dataset, "group_getitem_cols", None):
-            prs_dataset.set_group_getitem_cols(expected)
-        else:
-            # reset if not matching
-            need = ("experts","gate_input","phenotype")
-            if any(k not in prs_dataset.group_getitem_cols for k in need) or \
-            any(prs_dataset.group_getitem_cols[k] != expected[k] for k in ("experts","gate_input")):
-                prs_dataset.set_group_getitem_cols(expected)
-
-        # load the saved scaler used during training
-        import pickle
-        with open(osp.join(self.scaler_path, "MoE-PyTorch.scaler.pkl"), "rb") as f:
-            loaded_scaler = pickle.load(f)
-
-        # ensure the dataset applies the same training scaler without refitting
-        import copy
-        d = copy.deepcopy(prs_dataset)
-        d.standardize_data(scaler=loaded_scaler, refit=False)
-
-        #inference only 
-        with torch.no_grad():
-            return self.lit_model.predict_from_dataset(d)
-
-def load_lit_from_pt(prs_dataset, pt_path):
-    """
-    Rebuild the Lightning module with the right config and load weights from a .pt file.
-    """
-
-    #load checkpoint (weights and training config)
-    checkpoint = torch.load(pt_path, map_location="cpu")
-    if "config" not in checkpoint:
-        raise ValueError(f"Missing 'config' in checkpoint: {pt_path}")
-
-    cfg = checkpoint["config"]
-
-    # --- rebuild group_getitem_cols to match training ---
-    group_getitem_cols = {
-        "phenotype": [prs_dataset.phenotype_col],
-        "gate_input": prs_dataset.covariates_cols,
-        "experts": prs_dataset.prs_cols,
-        "global_input": prs_dataset.covariates_cols
-    }
-
-    # include per-exert covariates if used during training
-    if cfg.get("has_expert_covariates", False):
-        group_getitem_cols["expert_covariates"] = prs_dataset.covariates_cols
-
-    # --- reconstruct Lightning model from config ---
-    lit = Lit_MoEPRS(
-        group_getitem_cols=group_getitem_cols,
-        gate_model_layers=cfg["gate_model_layers"],
-        gate_add_batch_norm=cfg["gate_add_batch_norm"],
-        loss=cfg["loss"],
-        optimizer=cfg["optimizer"],
-        family=cfg["family"],
-        learning_rate=cfg["learning_rate"],
-        weight_decay=cfg["weight_decay"],
-        topk_k=cfg.get("topk_k", None),
-        tau_start=cfg.get("tau_start", 1.0),
-        tau_end=cfg.get("tau_end", 1.0),
-        hard_ste=cfg.get("hard_ste", True),
-        lb_coef=cfg.get("lb_coef", 0.0),
-        eps=cfg.get("eps", 1e-12),
-
-        use_ard_bias=cfg.get("use_ard_bias", True),
-        use_global_head=cfg.get("use_global_head", True),
-
-        ent_coef=cfg.get("ent_coef_start", 0.0),
-        ent_coef_end=cfg.get("ent_coef_end", None),
-        ent_warm_epochs=cfg.get("ent_warm_epochs", 0),
-        ent_decay_epochs=cfg.get("ent_decay_epochs", 0),
-    )
-
-    # non-state attrs that affect forward
-    if cfg.get("min_sigma2", None) is not None:
-        lit.min_sigma2 = float(cfg["min_sigma2"])
-    if "expert_bias_scale_floor" in cfg:
-        lit.expert_bias_scale_floor = float(cfg["expert_bias_scale_floor"])
-
-    # --- load trained weights ---
-    lit.load_state_dict(checkpoint["state_dict"], strict=True)
-
-    return lit
-
-=======
->>>>>>> Stashed changes
 def stratified_evaluation(prs_dataset,
                           trained_models=None,
                           cat_group_cols=None,
@@ -398,21 +293,9 @@ if __name__ == '__main__':
         model_prefix = split_fname[-3] + '/' + split_fname[-2] + ':'
         model_name = model_prefix + 'MoE-PyTorch'
 
-<<<<<<< Updated upstream
-        # rebuild Lightning module and wrap it to expose .predict(prs_dataset)
-        lit = load_lit_from_pt(prs_dataset, f)
-
-
-        model_dir = osp.dirname(f)
-
-        trained_models[model_name] = TorchMoEWrapper(
-            lit_model=lit,
-            scaler_path=model_dir
-=======
         trained_models[model_name] = load_model_any(
             prs_dataset,
             f,
->>>>>>> Stashed changes
         )
 
     if len(trained_models) == 0:

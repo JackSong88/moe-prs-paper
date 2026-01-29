@@ -110,6 +110,10 @@ class PRSDataset(Dataset):
         self.scaled_data = False
         self.scaler = StandardScaler()
 
+        self._data_matrix = None  # cached float32 matrix
+        self._cache_cols = None
+        self._cache_group_getitem_col_idx = None
+
     @classmethod
     def from_pickle(cls, f, backend='numpy'):
         """
@@ -159,6 +163,63 @@ class PRSDataset(Dataset):
         Get the covariates (sample attributes) from the dataset.
         """
         return self.covariates_cols
+
+    def cache_data_matrix(self):
+        """
+        Cache ONLY the columns needed by group_getitem_cols as float32.
+        """
+        import pandas as pd
+
+        assert self.group_getitem_cols is not None, "Call set_group_getitem_cols first."
+
+        # collect used columns in dataframe order
+        used = []
+        used_set = set()
+        for cols in self.group_getitem_cols.values():
+            for c in cols:
+                if c not in used_set:
+                    used.append(c)
+                    used_set.add(c)
+
+        # sanity: all used columns must be numeric (for now atleast)
+        bad = [c for c in used if not pd.api.types.is_numeric_dtype(self.data[c])]
+        if bad:
+            raise ValueError(f"Non-numeric columns are used by group_getitem_cols: {bad}")
+
+        self._cache_cols = used
+        X = self.data[self._cache_cols].to_numpy(dtype=np.float32, copy=True)
+
+        # build cached idx mapping
+        col_to_pos = {c: j for j, c in enumerate(self._cache_cols)}
+        self._cache_group_getitem_col_idx = {
+            k: [col_to_pos[c] for c in cols]
+            for k, cols in self.group_getitem_cols.items()
+        }
+
+        if self.backend is torch.Tensor:
+            self._data_matrix = torch.from_numpy(X)
+        else:
+            self._data_matrix = X
+
+    def get_batch(self, indices):
+        """
+        Vectorized batch fetch: indices are original row indices into self.data.
+        Returns the same dict structure as __getitem__ but batched.
+        """
+        assert self._data_matrix is not None, "Call cache_data_matrix() first."
+        assert self._cache_group_getitem_col_idx is not None, "Cache mapping missing."
+
+        if isinstance(indices, list):
+            indices = np.asarray(indices)
+
+        if self.backend is torch.Tensor:
+            if isinstance(indices, np.ndarray):
+                indices = torch.as_tensor(indices, dtype=torch.long)
+            Xb = self._data_matrix.index_select(0, indices)
+            return {k: Xb[:, v] for k, v in self._cache_group_getitem_col_idx.items()}
+        else:
+            Xb = self._data_matrix[indices]
+            return {k: Xb[:, v] for k, v in self._cache_group_getitem_col_idx.items()}
 
     def get_data_cols(self, exclude_meta=True):
 
@@ -396,6 +457,20 @@ class PRSDataset(Dataset):
             data = np.hstack([np.ones((data.shape[0], 1)), data])
 
         return self.backend(data)
+    
+    def get_ancestry(self, ancestry_col: str = "Ancestry"):
+        """
+        Return the ancestry labels as a 1D numpy array.
+
+        By default, assumes the column is named 'Ancestry'.
+        Change ancestry_col if your column has a different name.
+        """
+        assert ancestry_col in self.data.columns, (
+            f"Ancestry column '{ancestry_col}' not found in dataset columns: "
+            f"{list(self.data.columns)}"
+        )
+        return self.data[ancestry_col].values
+
 
     def concatenate(self, prs_dataset):
         """
@@ -443,13 +518,21 @@ class PRSDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-
         assert self.group_getitem_col_idx is not None
 
-        data_subset = self.data.iloc[idx, :].values
+        # ---- Cached fast path (indexes into cached matrix) ----
+        if self._data_matrix is not None:
+            assert self._cache_group_getitem_col_idx is not None, "Call cache_data_matrix() first."
+            row = self._data_matrix[idx]  # row is over _cache_cols
+            return {k: row[v] for k, v in self._cache_group_getitem_col_idx.items()}
 
-        return {k: self.backend(data_subset[v].astype(np.float32))
-                for k, v in self.group_getitem_col_idx.items()}
+        # ---- Non-cached path (indexes into full dataframe row) ----
+        row = self.data.iloc[idx, :].values  # this can be dtype=object if there are strings elsewhere
+        out = {}
+        for k, v in self.group_getitem_col_idx.items():
+            # IMPORTANT: only cast the selected slice (v) to float32, NOT the whole row
+            out[k] = self.backend(row[v].astype(np.float32, copy=False))
+        return out
 
     def save(self, f):
 

@@ -2,7 +2,7 @@
 
 source env/moe/bin/activate
 
-phenotypes=("URT" "CRTN" "TST")
+phenotypes=("URT" "CRTN" "TST" "WHR")
 strata=("M" "F")
 
 

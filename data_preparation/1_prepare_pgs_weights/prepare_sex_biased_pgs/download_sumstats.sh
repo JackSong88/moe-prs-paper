@@ -70,3 +70,25 @@ mv data/external_sumstats/sex_stratified/testosterone \
   data/external_sumstats/sex_stratified/TST
 
 rm data/external_sumstats/sex_stratified/Testosterone.tar.gz
+
+# ==============================================================================
+# Download/extract the summary statistics for WHR:
+
+wget -O data/external_sumstats/sex_stratified/WHR.tar.gz \
+    https://zenodo.org/records/7222725/files/waist_to_hip.tar.gz?download=1
+
+tar -xzf data/external_sumstats/sex_stratified/WHR.tar.gz \
+    -C data/external_sumstats/sex_stratified/
+
+# Rename the files:
+mv data/external_sumstats/sex_stratified/waist_to_hip/female_all.waist_to_hip.glm.linear \
+  data/external_sumstats/sex_stratified/waist_to_hip/F.glm.linear
+
+mv data/external_sumstats/sex_stratified/waist_to_hip/male_all.waist_to_hip.glm.linear \
+  data/external_sumstats/sex_stratified/waist_to_hip/M.glm.linear
+
+# Rename the directory:
+mv data/external_sumstats/sex_stratified/waist_to_hip \
+  data/external_sumstats/sex_stratified/WHR
+
+rm data/external_sumstats/sex_stratified/WHR.tar.gz

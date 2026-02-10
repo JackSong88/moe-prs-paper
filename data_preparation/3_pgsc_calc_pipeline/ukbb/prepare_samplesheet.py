@@ -10,7 +10,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--genotype-path",
         dest="genotype_path",
-        default="~/links/scratch/ukbb_qc_genotypes/",
+        default="/home/szabad/links/scratch/ukbb_qc_genotypes/",
         type=str,
         help="Path to the directory containing genotype data.",
     )

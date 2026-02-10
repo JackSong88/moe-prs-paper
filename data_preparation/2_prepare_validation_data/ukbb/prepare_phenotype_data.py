@@ -173,6 +173,12 @@ sub_pheno_df[["FID", "IID", "phenotype"]].to_csv(
     "data/phenotypes/ukbb/WHR.txt", sep="\t", index=False, header=False, na_rep="NA"
 )
 
+# Clean space for binary phenotype analyses:
+
+del pheno_df
+del sub_pheno_df
+del med_use_df
+
 # =============================================================================
 # Case/control phenotypes
 
@@ -275,8 +281,14 @@ t2d_idx = np.where(
     )
 )[0]
 
+# Delete `df_disease` to free up memory:
+
+sample_ids = df_disease[["FID", "IID"]].copy()
+del df_disease
+
+
 # T1D:
-t1d_df = df_disease[["FID", "IID"]].copy()
+t1d_df = sample_ids.copy()
 t1d_df["phenotype"] = 0
 t1d_df.iloc[diabetes_like_idx, -1] = -9
 t1d_df.iloc[t1d_idx, -1] = 1
@@ -287,7 +299,7 @@ t1d_df = t1d_df.loc[t1d_df["phenotype"] != -9]
 # sep="\t", index=False, header=False, na_rep='NA')
 
 # T2D:
-t2d_df = df_disease[["FID", "IID"]].copy()
+t2d_df = sample_ids
 t2d_df["phenotype"] = 0
 t2d_df.iloc[diabetes_like_idx, -1] = -9
 t2d_df.iloc[t2d_idx, -1] = 1

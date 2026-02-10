@@ -16,7 +16,7 @@ UKBB_GENOTYPE_DIR="/project/rpp-aevans-ab/neurohub/UKB/Bulk/Imputation/UKB_imput
 
 CHR=${1:-22}  # Chromosome number (default 22)
 ind_keep_file=${2-"data/keep_files/ukbb_qc_individuals.keep"}
-output_dir=${3-"home/szabad/links/scratch/ukbb_qc_genotypes"}
+output_dir=${3-"/home/szabad/links/scratch/ukbb_qc_genotypes"}
 snp_keep="data/snp_sets/GRCh37.bed"
 
 mkdir -p "$output_dir"

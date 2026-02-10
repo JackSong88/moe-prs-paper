@@ -5,14 +5,16 @@ Categorize medication use by sex and age
 
 import pandas as pd
 
-df = pd.read_csv("/lustre03/project/6008063/neurohub/UKB/Tabular/current.csv", nrows=0)
+tabular_data_file = "/project/rpp-aevans-ab/neurohub/UKB/Tabular/current.csv"
+
+df = pd.read_csv(tabular_data_file, nrows=0)
 
 # 6177 records medication use in males and 6153 records
 # medication use in females:
 medication_cols = [c for c in df.columns if "6177-0" in c or "6153-0" in c]
 
 df = pd.read_csv(
-    "/lustre03/project/6008063/neurohub/UKB/Tabular/current.csv",
+    tabular_data_file,
     usecols=["eid", "22001-0.0", "21022-0.0"] + medication_cols,
 )
 

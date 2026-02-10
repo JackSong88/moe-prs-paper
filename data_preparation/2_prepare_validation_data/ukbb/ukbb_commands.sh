@@ -8,7 +8,7 @@ mkdir -p data/misc/
 source env/moe/bin/activate
 
 # Extract covariates / phenotype data / QC filters:
-python data_preparation/2_prepare_validation_data/ukbb/generate_qc_filters.py ||
+python data_preparation/2_prepare_validation_data/ukbb/generate_qc_filters.py
 python data_preparation/2_prepare_validation_data/ukbb/extract_medication_data.py
 python data_preparation/2_prepare_validation_data/ukbb/prepare_phenotype_data.py
 

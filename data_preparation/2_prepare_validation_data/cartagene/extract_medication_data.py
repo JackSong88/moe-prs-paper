@@ -2,9 +2,7 @@ import os.path as osp
 
 import pandas as pd
 
-cartagene_homedir = (
-    "$HOME/links/projects/def-sgravel/cartagene/quebec_structure_936028/data/"
-)
+cartagene_homedir = "~/links/projects/def-sgravel/cartagene/"
 
 cols_dict = {
     "file111": "IID",

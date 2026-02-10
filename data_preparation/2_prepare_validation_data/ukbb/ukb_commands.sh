@@ -10,4 +10,4 @@ python data_preparation/2_prepare_validation_data/ukbb/extract_medication_data.p
 python data_preparation/2_prepare_validation_data/ukbb/prepare_phenotype_data.py
 
 # Extract genotype data:
-source data_preparation/2_prepare_validation_data/ukbb/extract_genotype_data.sh
+bash data_preparation/2_prepare_validation_data/ukbb/extract_genotype_data.sh

@@ -2,6 +2,9 @@
 
 set -e
 
+mkdir -p data/covariates/cartagene/
+mkdir -p data/misc/
+
 source env/moe/bin/activate
 
 python data_preparation/2_prepare_validation_data/cartagene/prepare_covariates.py

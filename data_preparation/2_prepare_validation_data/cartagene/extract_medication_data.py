@@ -40,16 +40,18 @@ bins = [0, 50, 60, float("inf")]
 labels = ["Age<50", "Age 50–60", "Age>60"]
 
 df["AgeGroup"] = pd.cut(df["Age"], bins=bins, labels=labels, right=False).astype(str)
+df["Sex"] = df["Sex"].astype(str).map({"0": "Female", "1": "Male"})
 
 res = []
 
 for med_cat in ("chol_med", "bp_med"):
     for group in ("Sex", "AgeGroup"):
         res.append(
-            df.groupby(group)[med_cat]
+            df[[group, med_cat]]
+            .groupby(group)[med_cat]
             .mean()
             .reset_index()
-            .rename(columns={group: "Group", "chol_med": "Proportion_Using_Medication"})
+            .rename(columns={group: "Group", med_cat: "Proportion_Using_Medication"})
         )
         res[-1]["Medication"] = {
             "chol_med": "Cholesterol lowering medication",

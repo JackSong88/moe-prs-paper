@@ -48,10 +48,11 @@ res = []
 for med_cat in ("chol_med", "bp_med"):
     for group in ("Sex", "AgeGroup"):
         res.append(
-            df.groupby(group)[med_cat]
+            df[[group, med_cat]]
+            .groupby(group)[med_cat]
             .mean()
             .reset_index()
-            .rename(columns={group: "Group", "chol_med": "Proportion_Using_Medication"})
+            .rename(columns={group: "Group", med_cat: "Proportion_Using_Medication"})
         )
         res[-1]["Medication"] = {
             "chol_med": "Cholesterol lowering medication",

@@ -2,6 +2,9 @@
 
 set -e
 
+mkdir -p data/covariates/ukbb/
+mkdir -p data/misc/
+
 source env/moe/bin/activate
 
 # Extract covariates / phenotype data / QC filters:

@@ -7,6 +7,7 @@
 
 # Load required modules:
 module load python/3.11
+module load java
 module load apptainer
 
 ################# Step 1: Grab the singularity containers #################

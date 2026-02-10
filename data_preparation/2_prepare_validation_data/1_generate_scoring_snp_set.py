@@ -42,18 +42,6 @@ for gb in genome_builds:
         else:
             df_gb = df_gb.merge(df, how="outer")
 
-    # Read the gnomad PC coordinates for the current genome build:
-    gnomad_pc_coord = pd.read_csv(
-        f"data/gnomad_data/gnomad_pca_snps_{gb}.bed",
-        sep="\t",
-        header=None,
-        usecols=[0, 1],
-    )
-    gnomad_pc_coord.columns = ["chr_name", "chr_position"]
-
-    # Merge the gnomad PC coordinates with the SNP positions from the scoring files:
-    df_gb = df_gb.merge(gnomad_pc_coord, how="outer")
-
     # Turn into a BED file:
     df_gb = df_gb[["chr_name", "chr_position", "chr_position"]]
 

@@ -16,19 +16,18 @@ UKBB_GENOTYPE_DIR="/project/rpp-aevans-ab/neurohub/UKB/Bulk/Imputation/UKB_imput
 
 CHR=${1:-22}  # Chromosome number (default 22)
 ind_keep_file=${2-"data/keep_files/ukbb_qc_individuals.keep"}
-output_dir=${3-"data/ukbb_qc_genotypes"}
+output_dir=${3-"~/links/scratch/ukbb_qc_genotypes"}
 snp_keep="data/snp_sets/GRCh37.bed"
 
 mkdir -p "$output_dir"
 
 plink2 --bgen "$UKBB_GENOTYPE_DIR/ukb22828_c${CHR}_b0_v3.bgen" ref-first \
       --sample "$UKBB_GENOTYPE_DIR/ukb22828_c${CHR}_b0_v3.sample" \
-      --make-bed \
+      --make-pgen \
       --allow-no-sex \
       --max-alleles 2 \
       --keep "$ind_keep_file" \
       --extract range "$snp_keep" \
-      --hard-call-threshold "0.1" \
       --out "$output_dir/chr_${CHR}"
 
 echo "Job finished with exit code $? at: `date`"

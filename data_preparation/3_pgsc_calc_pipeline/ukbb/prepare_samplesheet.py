@@ -24,7 +24,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--genotype-format",
         dest="genotype_format",
-        default="bfile",
+        default="pfile",
         choices={"pfile", "vcf", "bfile"},
         help="Format of the genotype data.",
     )

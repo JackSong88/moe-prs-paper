@@ -24,6 +24,7 @@ mkdir -p "$output_dir"
 plink2 --bgen "$UKBB_GENOTYPE_DIR/ukb22828_c${CHR}_b0_v3.bgen" ref-first \
       --sample "$UKBB_GENOTYPE_DIR/ukb22828_c${CHR}_b0_v3.sample" \
       --make-pgen \
+      --memory 60000 \
       --allow-no-sex \
       --max-alleles 2 \
       --keep "$ind_keep_file" \

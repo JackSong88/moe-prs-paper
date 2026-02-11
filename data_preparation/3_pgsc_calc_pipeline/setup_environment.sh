@@ -36,6 +36,13 @@ if [ ! -f pgsc_calc_requirements/reference_data/pgsc_HGDP+1kGP_v1.tar.zst ]; the
     wget https://ftp.ebi.ac.uk/pub/databases/spot/pgs/resources/pgsc_HGDP+1kGP_v1.tar.zst -O pgsc_calc_requirements/reference_data/pgsc_HGDP+1kGP_v1.tar.zst
 fi
 
+# Download liftover chains:
+mkdir -p pgsc_calc_requirements/liftover_chains/
+
+wget https://hgdownload.cse.ucsc.edu/goldenpath/hg19/liftOver/hg19ToHg38.over.chain.gz -O pgsc_calc_requirements/liftover_chains/hg19ToHg38.over.chain.gz
+wget https://hgdownload.cse.ucsc.edu/goldenpath/hg38/liftOver/hg38ToHg19.over.chain.gz -O pgsc_calc_requirements/liftover_chains/hg38ToHg19.over.chain.gz
+
+
 ################# Step 3: Setup nextflow environment #################
 
 echo "\n\n\n> Setting up nextflow environment..."

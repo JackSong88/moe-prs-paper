@@ -31,6 +31,18 @@ export NXF_WORK=$(pwd)/nextflow_home/work/"$biobank"
 mkdir -p "$NXF_WORK"
 mkdir -p "$output_dir"
 
+# Parse optional parameters:
+extra_params=()
+
+# If the estimator is windowed, add the window size to the parameters:
+# else, add the path to the LDetect blocks for the block estimator:
+if [[ "${biobank}" == "cartagene" ]]
+then
+  extra_params+=("--liftover")
+  extra_params+=("--hg19_chain" "pgsc_calc_requirements/liftover_chains/hg19ToHg38.over.chain.gz")
+  extra_params+=("--hg38_chain" "pgsc_calc_requirements/liftover_chains/hg38ToHg19.over.chain.gz")
+fi
+
 # Run the pipeline:
 "$NXF_HOME"/nextflow run pgscatalog/pgsc_calc \
             -profile singularity \
@@ -42,6 +54,7 @@ mkdir -p "$output_dir"
             --outdir "$output_dir" \
             --verbose \
             --min_overlap "$min_overlap" \
-            --run_ancestry "$(pwd)/pgsc_calc_requirements/reference_data/pgsc_HGDP+1kGP_v1.tar.zst"
+            --run_ancestry "$(pwd)/pgsc_calc_requirements/reference_data/pgsc_HGDP+1kGP_v1.tar.zst" \
+            "${extra_params[@]}"
 
 echo "Job finished with exit code $? at: `date`"

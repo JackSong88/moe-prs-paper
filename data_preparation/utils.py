@@ -1,12 +1,14 @@
 import pandas as pd
 
 
-def liftover_coordinates(dataframe,
-                         chr_col='CHR',
-                         pos_col='POS',
-                         source='hg19',
-                         target='hg38',
-                         chain_file=None):
+def liftover_coordinates(
+    dataframe,
+    chr_col="CHR",
+    pos_col="POS",
+    source="hg19",
+    target="hg38",
+    chain_file=None,
+):
     """
     Lift over the variant coordinates in a dataframe from one genome build to another.
 
@@ -23,15 +25,17 @@ def liftover_coordinates(dataframe,
 
     if chain_file is None:
         from liftover import get_lifter
+
         converter = get_lifter(source, target)
     else:
         from liftover import ChainFile
+
         converter = ChainFile(chain_file, source, target)
 
     def convert_coords(x):
         try:
-            res = converter[x[chr_col]][x[pos_col]][0]
-            chrom = int(res[0].replace('chr', ''))
+            res = converter[str(x[chr_col])][x[pos_col]][0]
+            chrom = int(res[0].replace("chr", ""))
             pos = int(res[1])
             return chrom, pos
         except Exception:

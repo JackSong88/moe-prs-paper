@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --account=def-sgravel
 #SBATCH --cpus-per-task=10
-#SBATCH --mem-per-cpu=7GB
-#SBATCH --time=08:00:00
+#SBATCH --mem-per-cpu=10GB
+#SBATCH --time=10:00:00
 #SBATCH --output=./log/pgsc_pipeline/%x.out
 #SBATCH --mail-user=shadi.zabad@mail.mcgill.ca
 #SBATCH --mail-type=FAIL
@@ -16,7 +16,7 @@ module load apptainer
 # Options set by user:
 biobank=${1:-"cartagene"}
 target_build=${2:-"GRCh38"}
-scorefiles=${3:-"data/pgs_weights/*/GRCh37/*.txt.gz"}
+scorefiles=${3:-"data/pgs_weights/*/${GRCh38}/*.txt.gz"}
 output_dir=${4:-"data/pgsc_calc_scores/$biobank/"}
 min_overlap=${5:-0.75}
 

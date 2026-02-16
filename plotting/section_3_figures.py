@@ -781,7 +781,7 @@ def plot_ldl_medication_use_subpanel():
 
     plt.tight_layout()
 
-    plt.savefig(f"figures/section_3/ldl_accuracy_medication_use_ukbb.eps")
+    plt.savefig("figures/section_3/ldl_accuracy_medication_use_ukbb.eps")
     plt.close()
 
 

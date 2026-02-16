@@ -77,7 +77,7 @@ def add_significance_stars(
 
     # Verify both models exist in hue_order
     if model1 not in hue_order or model2 not in hue_order:
-        print(f"Warning: One or both test_models not found in hue_order")
+        print("Warning: One or both test_models not found in hue_order")
         return
 
     # For each x category, test if the two models have non-overlapping distributions
@@ -629,8 +629,21 @@ if __name__ == "__main__":
 
     phenotype_cats = {
         "binary": ["ASTHMA", "T2D"],
-        "continuous": ["HEIGHT", "BMI", "FEV1_FVC", "HDL", "LDL", "LOG_TG", "TC"],
-        "sex_biased": ["TST", "URT", "CRTN"],
+        "continuous": [
+            "HEIGHT",
+            "BMI",
+            "HDL",
+            "LDL",
+            "LOG_TG",
+            "TC",
+            "DBP",
+            "DBP_adj",
+            "LDL_adj",
+            "SBP",
+            "SBP_adj",
+            "TC_adj",
+        ],
+        "sex_biased": ["TST", "URT", "CRTN", "WHR"],
     }
 
     metric = {

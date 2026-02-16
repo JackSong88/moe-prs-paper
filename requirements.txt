@@ -1,6 +1,7 @@
 viprs>=0.1
 magenpy>=0.1
 torch
+lightning
 scikit-learn
 seaborn
 matplotlib

@@ -586,8 +586,8 @@ if __name__ == "__main__":
         p_dataset,
         moe_model,
         group_col="Fine-scale genetic cluster (UMAP+HDBSCAN)",
-        title=f"PRS Mixture Graph\nUKB samples with unassigned ancestry (OTH)",
-        output_file=f"figures/section_2/admixture_graphs_ukbb_OTH.png",
+        title="PRS Mixture Graph\nUKB samples with unassigned ancestry (OTH)",
+        output_file="figures/section_2/admixture_graphs_ukbb_OTH.png",
         subsample_within_groups=True,
         agg_mechanism="sort",
         sorted_groups=[
@@ -605,7 +605,7 @@ if __name__ == "__main__":
     )
 
     # Second case: MID ancestry group in cartagene:
-    data_path = f"data/harmonized_data/HEIGHT/cartagene/test_data.pkl"
+    data_path = "data/harmonized_data/HEIGHT/cartagene/test_data.pkl"
     model_path = f"data/trained_models/HEIGHT/cartagene/train_data/{args.moe_model}.pkl"
 
     p_dataset = PRSDataset.from_pickle(data_path)
@@ -622,8 +622,8 @@ if __name__ == "__main__":
         p_dataset,
         moe_model,
         group_col="Fine-scale genetic cluster (UMAP+HDBSCAN)",
-        title=f"PRS Mixture Graph for Standing Height (CaG; Ancestry=MID)",
-        output_file=f"figures/section_2/admixture_graphs_cartagene_MID.png",
+        title="PRS Mixture Graph for Standing Height (CaG; Ancestry=MID)",
+        output_file="figures/section_2/admixture_graphs_cartagene_MID.png",
         subsample_within_groups=True,
         agg_mechanism="sort",
         sorted_groups=["North Africa", "Levant"],
@@ -633,7 +633,7 @@ if __name__ == "__main__":
     )
 
     # Third case: MID ancestry group in UKB:
-    data_path = f"data/harmonized_data/HEIGHT/ukbb/test_data.pkl"
+    data_path = "data/harmonized_data/HEIGHT/ukbb/test_data.pkl"
     model_path = f"data/trained_models/HEIGHT/ukbb/train_data/{args.moe_model}.pkl"
 
     p_dataset = PRSDataset.from_pickle(data_path)
@@ -657,8 +657,8 @@ if __name__ == "__main__":
         p_dataset,
         moe_model,
         group_col="Fine-scale genetic cluster (UMAP+HDBSCAN)",
-        title=f"PRS Mixture Graph for Standing Height (UKB; Ancestry=MID)",
-        output_file=f"figures/section_2/admixture_graphs_ukbb_MID.png",
+        title="PRS Mixture Graph for Standing Height (UKB; Ancestry=MID)",
+        output_file="figures/section_2/admixture_graphs_ukbb_MID.png",
         subsample_within_groups=True,
         sorted_groups=["Africa", "Horn of Africa", "North Africa", "Levant"],
         agg_mechanism="sort",

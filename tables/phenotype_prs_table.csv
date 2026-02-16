@@ -44,7 +44,7 @@ Type 2 Diabetes,T2D,"MONDO_0005148",PGS005247,PGS005247,CSA,
 Asthma,ASTHMA,"MONDO_0004979",PGS005121,PGS005121,AFR,
 Asthma,ASTHMA,"MONDO_0004979",PGS005128,PGS005128,EAS,
 Asthma,ASTHMA,"MONDO_0004979",PGS005134,PGS005134,EUR,
-Asthma,ASTHMA,"MONDO_0004979",PGS005140,PGS005140,SAS,
+Asthma,ASTHMA,"MONDO_0004979",PGS005140,PGS005140,CSA,
 Testosterone,TST,"EFO_0004908",PGS_TST_M,,Male,"PRS Inference using VIPRS. Sumstats from: https://zenodo.org/records/7222725"
 Testosterone,TST,"EFO_0004908",PGS_TST_F,,Female,"PRS Inference using VIPRS. Sumstats from: https://zenodo.org/records/7222725"
 Urate,URT,"EFO_0004531",PGS_URT_M,,Male,"PRS Inference using VIPRS. Sumstats from: https://zenodo.org/records/7222725"

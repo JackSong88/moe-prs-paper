@@ -6,8 +6,10 @@
 
 
 biobank=${1:-"ukbb"}
-phenotypes=("BMI" "CRTN" "FEV1_FVC" "HDL" "HEIGHT" "LDL" "LOG_TG" "TC" "TST" "URT" "T2D" "ASTHMA")
-sex_stratified_phenotypes=("TST" "URT" "CRTN")
+mapfile -t phenotypes < <(
+  find data/harmonized_data/ -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -u
+)
+sex_stratified_phenotypes=("TST" "URT" "CRTN" "WHR")
 
 source env/moe/bin/activate
 

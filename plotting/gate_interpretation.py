@@ -6,7 +6,6 @@ from plot_utils import (
     GROUP_MAP,
     MODEL_NAME_MAP,
     assign_models_consistent_colors,
-    sort_groups,
 )
 
 

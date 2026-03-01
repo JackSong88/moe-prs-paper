@@ -1,30 +1,12 @@
+import argparse
 import os.path as osp
 import sys
-
-parent_dir = osp.dirname(osp.dirname(osp.abspath(__file__)))
-sys.path.append(parent_dir)
-sys.path.append(osp.join(parent_dir, "model/"))
-sys.path.append(osp.join(parent_dir, "evaluation/"))
-import argparse
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from combined_accuracy_plots import plot_combined_accuracy_metrics
 from magenpy.utils.system_utils import makedir
-from moe import MoEPRS
-from plot_pgs_admixture import plot_admixture_graphs
-from plot_predictive_performance import generate_model_colors, postprocess_metrics_df
-from plot_utils import (
-    MODEL_NAME_MAP,
-    assign_ancestry_consistent_colors,
-    assign_models_consistent_colors,
-    read_eval_metrics,
-    sort_groups,
-    transform_eval_metrics,
-)
-from PRSDataset import PRSDataset
 from viprs.eval.continuous_metrics import (
     incremental_r2,
     mse,
@@ -32,6 +14,24 @@ from viprs.eval.continuous_metrics import (
     pearson_r,
     r2,
 )
+
+parent_dir = osp.dirname(osp.dirname(osp.abspath(__file__)))
+sys.path.append(parent_dir)
+sys.path.append(osp.join(parent_dir, "model/"))
+sys.path.append(osp.join(parent_dir, "evaluation/"))
+
+from combined_accuracy_plots import plot_combined_accuracy_metrics
+from moe import MoEPRS
+from plot_pgs_admixture import plot_admixture_graphs
+from plot_predictive_performance import postprocess_metrics_df
+from plot_utils import (
+    MODEL_NAME_MAP,
+    assign_ancestry_consistent_colors,
+    assign_models_consistent_colors,
+    read_eval_metrics,
+    transform_eval_metrics,
+)
+from PRSDataset import PRSDataset
 
 
 def plot_mixing_weight_comparison_quantitative(biobank="ukbb"):
@@ -287,10 +287,10 @@ def extract_accuracy_data(
         f"{args.moe_model} (cartagene)", "MoEPRS (CaG)", regex=False
     )
     df["Model Name"] = df["Model Name"].str.replace(
-        f"MultiPRS (ukbb)", "MultiPRS (UKB)", regex=False
+        "MultiPRS (ukbb)", "MultiPRS (UKB)", regex=False
     )
     df["Model Name"] = df["Model Name"].str.replace(
-        f"MultiPRS (cartagene)", "MultiPRS (CaG)", regex=False
+        "MultiPRS (cartagene)", "MultiPRS (CaG)", regex=False
     )
 
     dfs = postprocess_metrics_df(
@@ -555,7 +555,7 @@ if __name__ == "__main__":
     # Plot the fine-grained admixture graphs for the MoE model:
 
     # First case: OTH ancestry group in UKB:
-    data_path = f"data/harmonized_data/HEIGHT/ukbb/test_data.pkl"
+    data_path = "data/harmonized_data/HEIGHT/ukbb/test_data.pkl"
     model_path = f"data/trained_models/HEIGHT/ukbb/train_data/{args.moe_model}.pkl"
 
     p_dataset = PRSDataset.from_pickle(data_path)

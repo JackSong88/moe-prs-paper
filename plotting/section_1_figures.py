@@ -1,19 +1,20 @@
+import argparse
 import os.path as osp
 import sys
-
-parent_dir = osp.dirname(osp.dirname(osp.abspath(__file__)))
-sys.path.append(parent_dir)
-sys.path.append(osp.join(parent_dir, "model/"))
-sys.path.append(osp.join(parent_dir, "evaluation/"))
-import argparse
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from magenpy.utils.system_utils import makedir
+
+parent_dir = osp.dirname(osp.dirname(osp.abspath(__file__)))
+sys.path.append(parent_dir)
+sys.path.append(osp.join(parent_dir, "model/"))
+sys.path.append(osp.join(parent_dir, "evaluation/"))
+
 from combined_accuracy_plots import plot_combined_accuracy_metrics
 from evaluate_predictive_performance import stratified_evaluation
-from magenpy.utils.system_utils import makedir
 from moe import MoEPRS
 from plot_predictive_performance import postprocess_metrics_df
 from plot_utils import (

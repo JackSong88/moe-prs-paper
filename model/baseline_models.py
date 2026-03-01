@@ -216,13 +216,13 @@ class MultiPRS(object):
                 )
             else:
                 coefs["PRS"] = pd.DataFrame(
-                    self.reg_model.coef_,
+                    self.reg_model.coef_.T,
                     index=self.expert_cols,
                     columns=["Coefficient"],
                 )
         else:
             coefs["Covariates"] = pd.DataFrame(
-                self.reg_model.coef_,
+                self.reg_model.coef_.T,
                 index=self.covariates_cols,
                 columns=["Coefficient"],
             )

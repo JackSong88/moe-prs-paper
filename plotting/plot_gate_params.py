@@ -1,15 +1,16 @@
+import argparse
+import glob
 import os.path as osp
 import sys
+
+from magenpy.utils.system_utils import makedir
 
 parent_dir = osp.dirname(osp.dirname(osp.abspath(__file__)))
 sys.path.append(parent_dir)
 sys.path.append(osp.join(parent_dir, "model/"))
 sys.path.append(osp.join(parent_dir, "evaluation/"))
-import argparse
-import glob
 
 from gate_interpretation import gate_parameters_heatmap
-from magenpy.utils.system_utils import makedir
 from moe import MoEPRS
 from plot_utils import BIOBANK_NAME_MAP_SHORT, PHENOTYPE_NAME_MAP
 

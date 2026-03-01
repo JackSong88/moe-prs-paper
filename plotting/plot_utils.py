@@ -20,6 +20,7 @@ BIOBANK_NAME_MAP_SHORT = {
 GROUP_MAP = {"0": "Female", "1": "Male"}
 
 SORTED_ANCESTRY_LABEL = ["All", "EUR", "MID", "CSA", "EAS", "AMR", "AFR", "OTH"]
+SORTED_COARSE_ANCESTRY_LABEL = ["All", "EUR", "non-EUR"]
 
 UKBB_SORTED_UMAP_CLUSTERS = [
     "All",
@@ -128,6 +129,8 @@ def assign_models_consistent_colors(models, palette="Set3"):
 
 
 def sort_groups(groups):
+    if "non-EUR" in groups:
+        return sorted(groups, key=lambda x: SORTED_COARSE_ANCESTRY_LABEL.index(x))
     if len(set(groups).intersection(SORTED_ANCESTRY_LABEL)) > 2:
         return sorted(groups, key=lambda x: SORTED_ANCESTRY_LABEL.index(x))
     elif len(set(groups).intersection(UKBB_SORTED_UMAP_CLUSTERS)) > 2:

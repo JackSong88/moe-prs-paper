@@ -15,7 +15,7 @@ from combined_accuracy_plots import plot_combined_accuracy_metrics
 from evaluate_predictive_performance import stratified_evaluation
 from magenpy.utils.system_utils import makedir
 from moe import MoEPRS
-from plot_predictive_performance import generate_model_colors, postprocess_metrics_df
+from plot_predictive_performance import postprocess_metrics_df
 from plot_utils import (
     BIOBANK_NAME_MAP_SHORT,
     GROUP_MAP,
@@ -146,7 +146,7 @@ def extract_weights_data(biobank="ukbb"):
             continue
 
         w_df = pd.DataFrame(
-            np.array(["Female", "Male"])[dataset.get_data_columns("Sex")],
+            np.array(["Female", "Male"])[dataset.get_data_columns("Sex").astype(int)],
             columns=["Sex"],
         )
         w_df[["Age", "Ancestry"]] = dataset.get_data_columns(["Age", "Ancestry"])
@@ -584,5 +584,7 @@ if __name__ == "__main__":
 
     plot_phenotypic_variance("CRTN", biobank="ukbb")
     plot_phenotypic_variance("URT", biobank="ukbb")
+    plot_phenotypic_variance("WHR", biobank="ukbb")
     plot_phenotypic_variance("CRTN", biobank="cartagene")
     plot_phenotypic_variance("URT", biobank="cartagene")
+    plot_phenotypic_variance("WHR", biobank="cartagene")

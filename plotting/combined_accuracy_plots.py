@@ -2,477 +2,15 @@ import argparse
 import glob
 
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 import seaborn as sns
+from error_bars import add_error_bars_to_catplot
 from magenpy.utils.system_utils import makedir
 from plot_predictive_performance import generate_model_colors, postprocess_metrics_df
 from plot_utils import read_eval_metrics, sort_groups, transform_eval_metrics
+from significance_annotation import add_significance_annotations
 
-
-def check_significance_overlap(mean1, stderr1, mean2, stderr2):
-    """
-    Check if two distributions have non-overlapping confidence intervals.
-
-    Parameters:
-    -----------
-    mean1 : float
-        Mean of first distribution
-    stderr1 : float
-        Standard error of first distribution
-    mean2 : float
-        Mean of second distribution
-    stderr2 : float
-        Standard error of second distribution
-
-    Returns:
-    --------
-    bool
-        True if confidence intervals don't overlap (significant difference)
-    """
-    ci1_lower = mean1 - stderr1
-    ci1_upper = mean1 + stderr1
-    ci2_lower = mean2 - stderr2
-    ci2_upper = mean2 + stderr2
-
-    return (ci1_upper < ci2_lower) or (ci2_upper < ci1_lower)
-
-
-def add_significance_stars(
-    ax,
-    facet_data,
-    x,
-    y,
-    yerr,
-    hue,
-    hue_order,
-    test_models,
-    x_labels,
-):
-    """
-    Add significance stars to a plot for pairwise comparisons.
-
-    Parameters:
-    -----------
-    ax : matplotlib Axes
-        The axes to add stars to
-    facet_data : DataFrame
-        The data for this specific facet
-    x : str
-        Column name for x-axis grouping
-    y : str
-        Column name for y-axis values
-    yerr : str
-        Column name for error values
-    hue : str
-        Column name for hue grouping
-    hue_order : list
-        Order of hue categories
-    test_models : list of two strings
-        Names of two hue categories to compare
-    x_labels : list
-        Ordered list of x-axis category labels
-    """
-    model1, model2 = test_models
-
-    # Verify both models exist in hue_order
-    if model1 not in hue_order or model2 not in hue_order:
-        print("Warning: One or both test_models not found in hue_order")
-        return
-
-    # For each x category, test if the two models have non-overlapping distributions
-    for x_cat in x_labels:
-        # Get data for both models at this x category
-        model1_data = facet_data[(facet_data[hue] == model1) & (facet_data[x] == x_cat)]
-        model2_data = facet_data[(facet_data[hue] == model2) & (facet_data[x] == x_cat)]
-
-        if model1_data.empty or model2_data.empty:
-            continue
-
-        # Extract mean and stderr for both models
-        mean1 = model1_data[y].iloc[0]
-        stderr1 = model1_data[yerr].iloc[0]
-        mean2 = model2_data[y].iloc[0]
-        stderr2 = model2_data[yerr].iloc[0]
-
-        # Check for significance using overlap method
-        is_significant = check_significance_overlap(mean1, stderr1, mean2, stderr2)
-
-        if is_significant:
-            # Calculate position for the star (center of x category)
-            x_to_pos = {cat: pos for pos, cat in enumerate(x_labels)}
-            x_pos = x_to_pos[x_cat]
-
-            # Place star above the higher of the two distributions
-            ci1_upper = mean1 + stderr1
-            ci2_upper = mean2 + stderr2
-            y_pos = max(ci1_upper, ci2_upper)
-
-            # Add some padding above the error bars
-            y_range = ax.get_ylim()[1] - ax.get_ylim()[0]
-            y_pos += 0.03 * y_range
-
-            # Add the significance star
-            ax.text(
-                x_pos,
-                y_pos,
-                "*",
-                ha="center",
-                va="bottom",
-                fontsize=16,
-                fontweight="bold",
-                color="black",
-            )
-
-
-def add_error_bars(
-    plot_obj, data, x, y, yerr=None, hue=None, hue_order=None, error_kw=None, order=None
-):
-    """
-    Add error bars to a seaborn catplot (FacetGrid) or barplot (Axes) with hue grouping.
-
-    Parameters:
-    -----------
-    plot_obj : sns.FacetGrid or matplotlib.axes.Axes
-        The FacetGrid object returned by sns.catplot or the Axes object returned by sns.barplot.
-    data : DataFrame
-        The dataframe containing the data
-    x : str
-        Column name for x-axis grouping
-    y : str
-        Column name for y-axis values
-    yerr : str, optional
-        Column name for error values (defaults to f'{y}_err')
-    hue : str, optional
-        Column name for hue grouping
-    hue_order : list, optional
-        Order of hue categories
-    error_kw : dict, optional
-        Additional keyword arguments for errorbar formatting
-    order : list, optional
-        Order of x-axis categories (should match the order used in catplot/barplot)
-    """
-
-    # Default error bar styling
-    default_error_kw = {"ls": "", "color": "black", "capsize": 0, "capthick": 0}
-    if error_kw:
-        default_error_kw.update(error_kw)
-
-    if yerr is None:
-        yerr = f"{y}_err"
-
-    is_catplot = isinstance(plot_obj, sns.FacetGrid)
-
-    if is_catplot:
-        axes = plot_obj.axes_dict
-        # Extract col and row information for FacetGrid
-        col_name = plot_obj.col_names[0] if plot_obj.col_names else None
-        row_name = plot_obj.row_names[0] if plot_obj.row_names else None
-        # Get hue info from FacetGrid if available
-        if hue is None and plot_obj.hue_vars:
-            hue = plot_obj.hue_vars[0]
-        if hue_order is None and plot_obj.hue_names:
-            hue_order = plot_obj.hue_names
-    else:
-        axes = {None: plot_obj}  # Treat single Axes like a dict for iteration
-        col_name = None
-        row_name = None
-        # For a single barplot, we need to infer hue and hue_order
-        if hue is None:  # Try to infer hue if not explicitly provided
-            # This is a bit tricky for bare Axes. A common way is to check the legend or how bars are grouped.
-            # However, direct inspection of the seaborn barplot internal structure is more reliable if available.
-            # A simpler, more robust approach is to *require* `hue` to be passed for barplots if it's used.
-            # But let's try to be clever if `hue` is omitted but present in the data for grouping.
-            # If a barplot was created with hue, its legend handles often provide the hue order.
-            # This is a heuristic.
-            if plot_obj.legend_:
-                legend_labels = [
-                    text.get_text() for text in plot_obj.legend_.get_texts()
-                ]
-                # If the legend labels match distinct values in any data column, that could be our hue.
-                for col in data.columns:
-                    if set(legend_labels) == set(
-                        data[col].astype(str).drop_duplicates().tolist()
-                    ):
-                        hue = col
-                        hue_order = legend_labels
-                        break
-        elif (
-            hue_order is None and hue in data.columns
-        ):  # If hue is provided but order isn't
-            # Try to infer hue order from the order of bars, or default to data order
-            # This is complex as it depends on Seaborn's internal bar ordering.
-            # A safer default is to use the unique values from the data, which
-            # seaborn often sorts alphabetically by default if no order is specified.
-            hue_order = data[hue].drop_duplicates().tolist()
-            # If there's a legend, prioritize its order
-            if plot_obj.legend_:
-                legend_labels = [
-                    text.get_text() for text in plot_obj.legend_.get_texts()
-                ]
-                if set(legend_labels) == set(hue_order):
-                    hue_order = legend_labels
-
-    # Determine master x-axis category order
-    x_labels_master = None
-    if order is not None:
-        x_labels_master = order
-    elif is_catplot:
-        for temp_ax in plot_obj.axes.flat:
-            temp_labels = [label.get_text() for label in temp_ax.get_xticklabels()]
-            if temp_labels and not all(label == "" for label in temp_labels):
-                x_labels_master = temp_labels
-                break
-    else:  # For a single barplot
-        x_labels_master = [label.get_text() for label in plot_obj.get_xticklabels()]
-        if (
-            not x_labels_master
-        ):  # Fallback if labels are not yet set (e.g., for empty plot)
-            x_labels_master = data[x].drop_duplicates().tolist()
-
-    if x_labels_master is None:
-        x_labels_master = data[x].drop_duplicates().tolist()
-
-    for val, ax in axes.items():
-        facet_data = data.copy()
-        current_col_val = None
-        current_row_val = None
-
-        if is_catplot:
-            if isinstance(val, tuple):
-                current_row_val, current_col_val = val
-            elif col_name is not None:
-                current_col_val = val
-            else:
-                current_row_val = val
-
-            if col_name is not None and current_col_val is not None:
-                facet_data = facet_data[facet_data[col_name] == current_col_val]
-            if row_name is not None and current_row_val is not None:
-                facet_data = facet_data[facet_data[row_name] == current_row_val]
-
-        if facet_data.empty:
-            continue
-
-        x_labels = x_labels_master
-        x_positions = ax.get_xticks()
-
-        if hue and hue_order:
-            num_hues = len(hue_order)
-
-            # Re-calculating dodge distances based on standard seaborn barplot dodging
-            # This assumes seaborn's default dodging logic, which is generally consistent.
-            dodge_width = 0.8  # Standard total width for a group of dodged bars
-            bar_width = dodge_width / num_hues
-            dodge_distances = np.linspace(
-                -dodge_width / 2 + bar_width / 2,
-                dodge_width / 2 - bar_width / 2,
-                num_hues,
-            )
-
-            lw = 2 if len(x_labels) < 5 else 0.75
-            default_error_kw["lw"] = lw
-
-            for i, hue_val in enumerate(hue_order):
-                # Ensure string comparison for consistency
-                hue_data = facet_data[facet_data[hue] == str(hue_val)]
-
-                if hue_data.empty:
-                    continue
-
-                x_to_pos = {cat: pos for pos, cat in enumerate(x_labels)}
-
-                plot_data_for_hue = []
-                for x_cat in x_labels:
-                    cat_data = hue_data[hue_data[x] == x_cat]
-                    if not cat_data.empty:
-                        plot_data_for_hue.append(
-                            {
-                                "x_pos": x_to_pos[x_cat] + dodge_distances[i],
-                                "y": cat_data[y].iloc[0],
-                                "yerr": cat_data[yerr].iloc[0],
-                            }
-                        )
-
-                if plot_data_for_hue:
-                    x_pos = [d["x_pos"] for d in plot_data_for_hue]
-                    y_vals = [d["y"] for d in plot_data_for_hue]
-                    y_errs = [d["yerr"] for d in plot_data_for_hue]
-
-                    ax.errorbar(x_pos, y_vals, yerr=y_errs, **default_error_kw)
-        else:
-            lw = 2 if len(x_labels) < 5 else 0.75
-            default_error_kw["lw"] = lw
-
-            plot_data_no_hue = []
-            for x_cat in x_labels:
-                cat_data = facet_data[facet_data[x] == x_cat]
-                if not cat_data.empty:
-                    plot_data_no_hue.append(
-                        {"y": cat_data[y].iloc[0], "yerr": cat_data[yerr].iloc[0]}
-                    )
-
-            if plot_data_no_hue:
-                y_vals = [d["y"] for d in plot_data_no_hue]
-                y_errs = [d["yerr"] for d in plot_data_no_hue]
-                ax.errorbar(x_positions, y_vals, yerr=y_errs, **default_error_kw)
-
-
-def add_error_bars_to_catplot(
-    grid,
-    data,
-    x,
-    y,
-    yerr=None,
-    hue=None,
-    hue_order=None,
-    col=None,
-    row=None,
-    error_kw=None,
-    order=None,
-):
-    """
-    Add error bars to a seaborn catplot with facets and hue grouping.
-
-    Parameters:
-    -----------
-    grid : sns.FacetGrid
-        The FacetGrid object returned by sns.catplot
-    data : DataFrame
-        The dataframe containing the data
-    x : str
-        Column name for x-axis grouping
-    y : str
-        Column name for y-axis values
-    yerr : str, optional
-        Column name for error values (defaults to f'{y}_err')
-    hue : str, optional
-        Column name for hue grouping
-    hue_order : list, optional
-        Order of hue categories
-    col : str, optional
-        Column name for column faceting
-    row : str, optional
-        Column name for row faceting
-    error_kw : dict, optional
-        Additional keyword arguments for errorbar formatting
-    order : list, optional
-        Order of x-axis categories (should match the order used in catplot)
-    """
-
-    # Default error bar styling
-    default_error_kw = {"ls": "", "color": "black", "capsize": 0, "capthick": 0}
-    if error_kw:
-        default_error_kw.update(error_kw)
-
-    if yerr is None:
-        yerr = f"{y}_err"
-
-    # Get x-axis category order once - try multiple approaches
-    x_labels_master = None
-    if order is not None:
-        x_labels_master = order
-    else:
-        # Try to get labels from any subplot that has them visible
-        for temp_ax in grid.axes.flat:
-            temp_labels = [label.get_text() for label in temp_ax.get_xticklabels()]
-            if temp_labels and not all(label == "" for label in temp_labels):
-                x_labels_master = temp_labels
-                break
-
-        # Fallback: get unique categories from data
-        if x_labels_master is None:
-            x_labels_master = data[x].drop_duplicates().tolist()
-
-    row_val = None
-    col_val = None
-
-    # Iterate through each subplot in the grid
-    for val, ax in grid.axes_dict.items():
-        # Filter data for this specific facet
-        facet_data = data.copy()
-
-        if isinstance(val, tuple):
-            row_val, col_val = val
-        elif col is not None:
-            col_val = val
-        else:
-            row_val = val
-
-        if col is not None and col_val is not None:
-            facet_data = facet_data[facet_data[col] == col_val]
-        if row is not None and row_val is not None:
-            facet_data = facet_data[facet_data[row] == row_val]
-
-        if facet_data.empty:
-            continue
-
-        # Use the master x_labels order for all subplots
-        x_labels = x_labels_master
-        x_positions = range(len(x_labels))
-
-        if hue and hue_order:
-            # Calculate dodge distances for multiple hues
-            num_hues = len(hue_order)
-            dodge_width = 0.8  # Total width for all bars
-            bar_width = dodge_width / num_hues
-            dodge_distances = np.linspace(
-                -dodge_width / 2 + bar_width / 2,
-                dodge_width / 2 - bar_width / 2,
-                num_hues,
-            )
-
-            # Set line width based on number of groups
-            lw = 2 if len(x_labels) < 5 else 0.75
-            default_error_kw["lw"] = lw
-
-            # Add error bars for each hue
-            for i, hue_val in enumerate(hue_order):
-                hue_data = facet_data[facet_data[hue] == hue_val]
-
-                if hue_data.empty:
-                    continue
-
-                # Create mapping from x categories to positions
-                x_to_pos = {cat: pos for pos, cat in enumerate(x_labels)}
-
-                # Get data in the correct order
-                plot_data = []
-                for x_cat in x_labels:
-                    cat_data = hue_data[hue_data[x] == x_cat]
-                    if not cat_data.empty:
-                        plot_data.append(
-                            {
-                                "x_pos": x_to_pos[x_cat] + dodge_distances[i],
-                                "y": cat_data[y].iloc[0],
-                                "yerr": cat_data[yerr].iloc[0],
-                            }
-                        )
-
-                if plot_data:
-                    x_pos = [d["x_pos"] for d in plot_data]
-                    y_vals = [d["y"] for d in plot_data]
-                    y_errs = [d["yerr"] for d in plot_data]
-
-                    ax.errorbar(x_pos, y_vals, yerr=y_errs, **default_error_kw)
-        else:
-            # No hue grouping - simpler case
-            lw = 2 if len(x_labels) < 5 else 0.75
-            default_error_kw["lw"] = lw
-
-            # Get data in the correct order
-            plot_data = []
-            for x_cat in x_labels:
-                cat_data = facet_data[facet_data[x] == x_cat]
-                if not cat_data.empty:
-                    plot_data.append(
-                        {"y": cat_data[y].iloc[0], "yerr": cat_data[yerr].iloc[0]}
-                    )
-
-            if plot_data:
-                y_vals = [d["y"] for d in plot_data]
-                y_errs = [d["yerr"] for d in plot_data]
-                ax.errorbar(x_positions, y_vals, yerr=y_errs, **default_error_kw)
+# ---------------------------------------------------------------------------
 
 
 def plot_combined_accuracy_metrics(
@@ -483,12 +21,28 @@ def plot_combined_accuracy_metrics(
     hue_order=None,
     col_order=None,
     col_wrap=None,
+    test_models=None,  # Test if models are significantly different
+    significance_symbols=None,
     sharey=False,
     height=5,
     aspect=1,
 ):
+    # ---------------------------------------------------------------------
+    # Sanity checks / preparation
+
+    if test_models is not None:
+        if len(test_models) == 2 and isinstance(test_models[0], str):
+            test_models = [test_models]
+
+        for tm in test_models:
+            assert len(tm) == 2
+
+        assert f"{metric}_err" in metrics_df
+
     if hue_order is None:
         _, hue_order = generate_model_colors(metrics_df, metric)
+
+    sorted_groups = sort_groups(metrics_df["Evaluation Group"].unique())
 
     # ---------------------------------------------------------------------
 
@@ -498,7 +52,7 @@ def plot_combined_accuracy_metrics(
         col="Phenotype",
         col_wrap=col_wrap,
         col_order=col_order,
-        order=sort_groups(metrics_df["Evaluation Group"].unique()),
+        order=sorted_groups,
         hue="Model Name",
         palette=palette,
         hue_order=hue_order,
@@ -520,6 +74,20 @@ def plot_combined_accuracy_metrics(
             col="Phenotype",
         )
 
+        if test_models is not None:
+            add_significance_annotations(
+                grid,
+                metrics_df,
+                "Evaluation Group",
+                metric,
+                f"{metric}_err",
+                hue="Model Name",
+                hue_order=hue_order,
+                test_pairs=test_models,
+                x_labels=sorted_groups,
+                symbols=significance_symbols,
+            )
+
     grid.set_axis_labels(
         x_var="Evaluation Group",
         y_var={
@@ -528,28 +96,6 @@ def plot_combined_accuracy_metrics(
             "CORR": "Pearson $R$",
         }[metric],
     )
-
-    # ---------------------------------------------------------------------
-
-    if False and len(metrics_df["Phenotype"].unique()) > 3:
-        # Get handles and labels from one of the subplots for the legend
-        handles, labels = grid.axes.flat[0].get_legend_handles_labels()
-
-        fig = grid.figure
-        fig.legend(
-            handles,
-            labels,
-            bbox_to_anchor=(0.875, 0.25),  # Adjust these coordinates as needed
-            loc="center",
-            frameon=False,
-        )
-
-        # grid._legend.remove()
-
-        # Add an 8th subplot for the legend in the bottom-right position
-        # legend_ax = grid.figure.add_subplot(2, 4, 8)  # 2x4 grid, position 8
-        # legend_ax.legend(handles, labels, loc='center', frameon=False)
-        # legend_ax.set_axis_off()  # Hide the axes for the legend subplot
 
     for ax in grid.axes.flat:
         title = ax.get_title()
@@ -652,9 +198,13 @@ if __name__ == "__main__":
         "sex_biased": "Incremental_R2",
     }
 
-    category = {"binary": "Ancestry", "continuous": "Ancestry", "sex_biased": "Sex"}
+    stratification_variable = {
+        "binary": ["Ancestry", "Coarse Ancestry"],
+        "continuous": ["Ancestry", "Coarse Ancestry"],
+        "sex_biased": ["Sex"],
+    }
 
-    metrics_dfs = {"binary": [], "continuous": [], "sex_biased": []}
+    metrics_dfs = {}
 
     for f in glob.glob(f"data/evaluation/*/{args.biobank}/{args.dataset}_data.csv"):
         pheno = f.split("/")[-3]
@@ -667,34 +217,45 @@ if __name__ == "__main__":
 
         df = df.loc[
             (df["Model Category"] != "MoE")
-            | df["Model Name"].isin(
-                [  # f'MoE-CFG ({args.biobank})',
-                    f"{args.moe_model} ({args.biobank})"
-                ]
-            )
+            | df["Model Name"].isin([f"{args.moe_model} ({args.biobank})"])
         ]
 
         if args.restrict_to_same_biobank:
             df = df.loc[df["Training biobank"] == df["Test biobank"]]
 
-        df = postprocess_metrics_df(
-            df,
-            metric[pheno_cat],
-            category=category[pheno_cat],
-            aggregate_single_prs=args.aggregate_single_prs,
-        )
+        for eval_cat in stratification_variable[pheno_cat]:
+            eval_df = postprocess_metrics_df(
+                df,
+                metric[pheno_cat],
+                category=eval_cat,
+                aggregate_single_prs=args.aggregate_single_prs,
+            )
 
-        metrics_dfs[pheno_cat].append(df)
+            metric_cat = f"{pheno_cat}_{eval_cat}"
+
+            if metric_cat not in metrics_dfs:
+                metrics_dfs[metric_cat] = [eval_df]
+            else:
+                metrics_dfs[metric_cat].append(eval_df)
 
     makedir(f"figures/accuracy/{args.biobank}/{args.dataset}/")
 
-    for pheno_cat, dfs in metrics_dfs.items():
+    for pheno_eval_cat, dfs in metrics_dfs.items():
         if len(dfs) < 1:
-            raise ValueError(f"No data to plot after applying filters for {pheno_cat}.")
+            raise ValueError(
+                f"No data to plot after applying filters for {pheno_eval_cat}."
+            )
+
+        pheno_cat = "_".join(pheno_eval_cat.split("_")[:-1])
 
         plot_combined_accuracy_metrics(
             pd.concat(dfs, axis=0).reset_index(drop=True),
-            f"figures/accuracy/{args.biobank}/{args.dataset}/combined_metrics_{args.moe_model}_{pheno_cat}.eps",
+            f"figures/accuracy/{args.biobank}/{args.dataset}/combined_metrics_{args.moe_model}_{pheno_eval_cat}.eps",
             metric=metric[pheno_cat],
             col_order=phenotype_cats[pheno_cat],
+            col_wrap=min(5, len(phenotype_cats[pheno_cat])),
+            test_models=[
+                (f"{args.moe_model} ({args.biobank})", f"MultiPRS ({args.biobank})")
+            ],
+            significance_symbols=("*",),  # "◆"),
         )

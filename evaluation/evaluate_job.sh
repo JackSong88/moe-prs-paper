@@ -16,7 +16,8 @@ source "env/moe/bin/activate"
 for dataset in data/harmonized_data/"$phenotype"/*/*_data.pkl
 do
   python3 evaluation/evaluate_predictive_performance.py --test-data "$dataset" \
-                                                        --cat-group-cols Ancestry Sex
+                                                        --cat-group-cols Ancestry Sex \
+                                                        --include-coarse-ancestry
 done
 
 echo "Job finished with exit code $? at: `date`"

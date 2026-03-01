@@ -5,7 +5,6 @@ import sys
 sys.path.append(osp.dirname(osp.dirname(__file__)))
 sys.path.append(osp.dirname(osp.dirname(osp.dirname(__file__))))
 import argparse
-import copy
 import json
 
 from baseline_models import AncestryWeightedPRS, MultiPRS

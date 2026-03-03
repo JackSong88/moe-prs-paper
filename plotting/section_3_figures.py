@@ -1,38 +1,38 @@
+import argparse
 import os.path as osp
 import sys
-
-parent_dir = osp.dirname(osp.dirname(osp.abspath(__file__)))
-sys.path.append(parent_dir)
-sys.path.append(osp.join(parent_dir, "model/"))
-sys.path.append(osp.join(parent_dir, "evaluation/"))
-import argparse
 from itertools import product
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from magenpy.utils.system_utils import makedir
+from scipy.stats import pearsonr
+from viprs.eval.eval_utils import fit_linear_model
+
+parent_dir = osp.dirname(osp.dirname(osp.abspath(__file__)))
+sys.path.append(parent_dir)
+sys.path.append(osp.join(parent_dir, "model/"))
+sys.path.append(osp.join(parent_dir, "evaluation/"))
+
 from baseline_models import MultiPRS
 from combined_accuracy_plots import add_error_bars, plot_combined_accuracy_metrics
-from magenpy.utils.system_utils import makedir
 from matplotlib.lines import Line2D
 from moe import MoEPRS
 from plot_pgs_admixture import plot_admixture_graphs
-from plot_predictive_performance import generate_model_colors, postprocess_metrics_df
+from plot_predictive_performance import postprocess_metrics_df
 from plot_stratified_prediction_accuracy import extract_stratified_evaluation_metrics
 from plot_utils import (
     BIOBANK_NAME_MAP_SHORT,
     GROUP_MAP,
     MODEL_NAME_MAP,
-    assign_ancestry_consistent_colors,
     assign_models_consistent_colors,
     read_eval_metrics,
     sort_groups,
     transform_eval_metrics,
 )
 from PRSDataset import PRSDataset
-from scipy.stats import pearsonr
-from viprs.eval.eval_utils import fit_linear_model
 
 
 def extract_complementarity_data(
@@ -781,7 +781,7 @@ def plot_ldl_medication_use_subpanel():
 
     plt.tight_layout()
 
-    plt.savefig(f"figures/section_3/ldl_accuracy_medication_use_ukbb.eps")
+    plt.savefig("figures/section_3/ldl_accuracy_medication_use_ukbb.eps")
     plt.close()
 
 

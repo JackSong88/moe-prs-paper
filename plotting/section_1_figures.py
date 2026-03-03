@@ -1,21 +1,22 @@
+import argparse
 import os.path as osp
 import sys
-
-parent_dir = osp.dirname(osp.dirname(osp.abspath(__file__)))
-sys.path.append(parent_dir)
-sys.path.append(osp.join(parent_dir, "model/"))
-sys.path.append(osp.join(parent_dir, "evaluation/"))
-import argparse
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from magenpy.utils.system_utils import makedir
+
+parent_dir = osp.dirname(osp.dirname(osp.abspath(__file__)))
+sys.path.append(parent_dir)
+sys.path.append(osp.join(parent_dir, "model/"))
+sys.path.append(osp.join(parent_dir, "evaluation/"))
+
 from combined_accuracy_plots import plot_combined_accuracy_metrics
 from evaluate_predictive_performance import stratified_evaluation
-from magenpy.utils.system_utils import makedir
 from moe import MoEPRS
-from plot_predictive_performance import generate_model_colors, postprocess_metrics_df
+from plot_predictive_performance import postprocess_metrics_df
 from plot_utils import (
     BIOBANK_NAME_MAP_SHORT,
     GROUP_MAP,
@@ -146,7 +147,7 @@ def extract_weights_data(biobank="ukbb"):
             continue
 
         w_df = pd.DataFrame(
-            np.array(["Female", "Male"])[dataset.get_data_columns("Sex")],
+            np.array(["Female", "Male"])[dataset.get_data_columns("Sex").astype(int)],
             columns=["Sex"],
         )
         w_df[["Age", "Ancestry"]] = dataset.get_data_columns(["Age", "Ancestry"])
@@ -496,7 +497,12 @@ if __name__ == "__main__":
     sns.set_context("paper", font_scale=1.5)
     makedir("figures/section_1/")
 
-    phenotypes = {"TST": "Testosterone", "URT": "Urate", "CRTN": "Creatinine"}
+    phenotypes = {
+        "TST": "Testosterone",
+        "URT": "Urate",
+        "CRTN": "Creatinine",
+        "WHR": "Waist-hip ratio",
+    }
 
     palette = {
         "Male PRS": "#A1BE95",
@@ -506,6 +512,7 @@ if __name__ == "__main__":
     }
 
     hue_order = ["MoEPRS", "MultiPRS", "Female PRS", "Male PRS"]
+    phenotype_order = ["Testosterone", "Creatinine", "Urate", "Waist-hip ratio"]
 
     ukbb_metrics_dfs = extract_accuracy_data()
 
@@ -515,10 +522,12 @@ if __name__ == "__main__":
 
     ukbb_w_dfs = extract_weights_data()
 
+    ukb_col_order = [p + " (UKB)" for p in phenotype_order]
+
     plot_combined_accuracy_metrics(
         ukbb_metrics_dfs,
         "figures/section_1/ukb_accuracy_subpanels.pdf",
-        col_order=["Testosterone (UKB)", "Creatinine (UKB)", "Urate (UKB)"],
+        col_order=ukb_col_order,
         palette=palette,
         hue_order=hue_order,
     )
@@ -526,13 +535,13 @@ if __name__ == "__main__":
     plot_gate_mixing_weights_colored_by_sex(
         ukbb_w_dfs,
         "figures/section_1/ukb_weights.png",
-        order=["Testosterone (UKB)", "Creatinine (UKB)", "Urate (UKB)"],
+        order=ukb_col_order,
     )
 
     plot_gate_mixing_weights_colored_by_ancestry(
         ukbb_w_dfs,
         "figures/section_1/ukb_weights_ancestry_colored.png",
-        order=["Testosterone (UKB)", "Creatinine (UKB)", "Urate (UKB)"],
+        order=ukb_col_order,
     )
 
     cartagene_metrics_dfs = extract_accuracy_data(
@@ -547,10 +556,12 @@ if __name__ == "__main__":
 
     cartagene_w_dfs = extract_weights_data(biobank="cartagene")
 
+    cag_col_order = [p + " (CaG)" for p in phenotype_order[1:]]
+
     plot_combined_accuracy_metrics(
         cartagene_metrics_dfs,
         "figures/section_1/cartagene_accuracy_subpanels.pdf",
-        col_order=["Creatinine (CaG)", "Urate (CaG)"],
+        col_order=cag_col_order,
         palette=palette,
         hue_order=hue_order,
     )
@@ -558,13 +569,13 @@ if __name__ == "__main__":
     plot_gate_mixing_weights_colored_by_sex(
         cartagene_w_dfs,
         "figures/section_1/cartagene_weights.png",
-        order=["Creatinine (CaG)", "Urate (CaG)"],
+        order=cag_col_order,
     )
 
     plot_gate_mixing_weights_colored_by_ancestry(
         cartagene_w_dfs,
         "figures/section_1/cartagene_weights_ancestry_colored.png",
-        order=["Creatinine (CaG)", "Urate (CaG)"],
+        order=cag_col_order,
     )
 
     sns.set_context("paper", font_scale=1.25)
@@ -574,5 +585,7 @@ if __name__ == "__main__":
 
     plot_phenotypic_variance("CRTN", biobank="ukbb")
     plot_phenotypic_variance("URT", biobank="ukbb")
+    plot_phenotypic_variance("WHR", biobank="ukbb")
     plot_phenotypic_variance("CRTN", biobank="cartagene")
     plot_phenotypic_variance("URT", biobank="cartagene")
+    plot_phenotypic_variance("WHR", biobank="cartagene")

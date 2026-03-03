@@ -1,29 +1,37 @@
-import numpy as np
-from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet, LogisticRegression
-from sklearn.utils.validation import check_is_fitted
-from sklearn.exceptions import NotFittedError
-import pandas as pd
 import copy
 import pickle
 
+import numpy as np
+import pandas as pd
+from scipy.special import expit, logit
+from sklearn.exceptions import NotFittedError
+from sklearn.linear_model import (
+    ElasticNet,
+    Lasso,
+    LinearRegression,
+    LogisticRegression,
+    Ridge,
+)
+from sklearn.utils.validation import check_is_fitted
+
 
 class MultiPRS(object):
-    
-    def __init__(self,
-                 prs_dataset=None,
-                 expert_cols=None,
-                 covariates_cols=None,
-                 class_weights=None,
-                 add_intercept=True,
-                 standardize_data=True,
-                 penalty_type=None,
-                 penalty=0.):
-
+    def __init__(
+        self,
+        prs_dataset=None,
+        expert_cols=None,
+        covariates_cols=None,
+        class_weights=None,
+        add_intercept=True,
+        standardize_data=True,
+        penalty_type=None,
+        penalty=0.0,
+    ):
         # -------------------------------------------------------------------------
         # Sanity checks:
 
-        assert penalty >= 0.
-        if penalty > 0.:
+        assert penalty >= 0.0
+        if penalty > 0.0:
             assert penalty_type is not None
 
         # -------------------------------------------------------------------------
@@ -45,7 +53,6 @@ class MultiPRS(object):
             self.expert_cols = [self.expert_cols]
 
         if prs_dataset is not None:
-
             # If standardize_data is True, standardize the training data:
             if standardize_data:
                 prs_dataset.standardize_data()
@@ -67,35 +74,41 @@ class MultiPRS(object):
             self.family = None
 
         # Initialize the regression model:
-        if self.family == 'gaussian':
-            if penalty_type == 'l1':
+        if self.family == "gaussian":
+            if penalty_type == "l1":
                 self.reg_model = Lasso(alpha=penalty, fit_intercept=add_intercept)
-            elif penalty_type == 'l2':
+            elif penalty_type == "l2":
                 self.reg_model = Ridge(alpha=penalty, fit_intercept=add_intercept)
-            elif penalty_type == 'elasticnet':
+            elif penalty_type == "elasticnet":
                 self.reg_model = ElasticNet(alpha=penalty, fit_intercept=add_intercept)
             else:
                 self.reg_model = LinearRegression(fit_intercept=add_intercept)
         else:
-            if penalty == 0.:
+            if penalty == 0.0:
                 penalty = np.inf
 
-            self.reg_model = LogisticRegression(fit_intercept=add_intercept,
-                                                class_weight=class_weights,
-                                                penalty=penalty_type,
-                                                C=penalty)
-        
+            self.reg_model = LogisticRegression(
+                fit_intercept=add_intercept,
+                class_weight=class_weights,
+                penalty=penalty_type,
+                C=penalty,
+            )
+
     @classmethod
     def from_saved_model(cls, param_file):
-
         model = cls()
-        
+
         with open(param_file, "rb") as pf:
-            (model.reg_model, model.expert_cols, model.covariates_cols,
-             model.data_scaler, model.family) = pickle.load(pf)
+            (
+                model.reg_model,
+                model.expert_cols,
+                model.covariates_cols,
+                model.data_scaler,
+                model.family,
+            ) = pickle.load(pf)
 
         return model
-    
+
     @property
     def N(self):
         """
@@ -133,67 +146,86 @@ class MultiPRS(object):
 
         if len(input_cols) > 0:
             return input_cols
-    
-    def predict(self, prs_dataset=None):
 
+    def predict(self, prs_dataset=None, logit_scale=False):
+        """
+        Predict for training or new test samples.
+
+        :param prs_dataset: An independent test set.
+        :param logit_scale: If we're analyzing binary phenotypes
+        the user can request returning results on logit scale.
+        """
         assert self.input_cols is not None
 
         if prs_dataset is None:
             input_data = self.input_data
         else:
-            input_data = prs_dataset.get_data_columns(self.input_cols,
-                                                      scaler=self.data_scaler)
+            input_data = prs_dataset.get_data_columns(
+                self.input_cols, scaler=self.data_scaler
+            )
 
         if self.family == "gaussian":
             return self.reg_model.predict(input_data).flatten()
         else:
-            return self.reg_model.predict_proba(input_data)[:, 1]
+            proba = self.reg_model.predict_proba(input_data)[:, 1]
 
-    def predict_prs(self, prs_dataset=None):
+            if logit_scale:
+                return logit(proba)
+            else:
+                return proba
 
+    def predict_prs(self, prs_dataset=None, logit_scale=False):
         assert self.input_cols is not None
 
         coefs = self.get_coefficients()
 
         if prs_dataset is None:
-            input_data = self.input_data[:, [0, self.C]['Covariates' in coefs]:]
+            input_data = self.input_data[:, [0, self.C]["Covariates" in coefs] :]
         else:
-            input_data = prs_dataset.get_data_columns(self.expert_cols,
-                                                      scaler=self.data_scaler)
+            input_data = prs_dataset.get_data_columns(
+                self.expert_cols, scaler=self.data_scaler
+            )
+
+        pred = input_data.dot(coefs["PRS"]).flatten()
 
         if self.family == "gaussian":
-            return input_data.dot(coefs['PRS']).flatten()
+            return pred
         else:
-            return self.reg_model.predict_proba(input_data)[:, 1]
+            if logit_scale:
+                return pred
+            else:
+                return expit(pred)
 
     def get_coefficients(self):
-
         assert self.reg_model is not None
 
-        coefs = {'Intercept': self.reg_model.intercept_}
+        coefs = {"Intercept": self.reg_model.intercept_}
 
         if self.expert_cols is not None:
             if self.covariates_cols is not None:
-
-                coefs['Covariates'] = pd.DataFrame(
-                    self.reg_model.coef_.flatten()[:self.C],
+                coefs["Covariates"] = pd.DataFrame(
+                    self.reg_model.coef_.flatten()[: self.C],
                     index=self.covariates_cols,
-                    columns=['Coefficient'],)
+                    columns=["Coefficient"],
+                )
 
-                coefs['PRS'] = pd.DataFrame(
-                    self.reg_model.coef_.flatten()[self.C:],
+                coefs["PRS"] = pd.DataFrame(
+                    self.reg_model.coef_.flatten()[self.C :],
                     index=self.expert_cols,
-                    columns=['Coefficient'],)
+                    columns=["Coefficient"],
+                )
             else:
-                coefs['PRS'] = pd.DataFrame(
-                    self.reg_model.coef_,
+                coefs["PRS"] = pd.DataFrame(
+                    self.reg_model.coef_.T,
                     index=self.expert_cols,
-                    columns=['Coefficient'],)
+                    columns=["Coefficient"],
+                )
         else:
-            coefs['Covariates'] = pd.DataFrame(
-                self.reg_model.coef_,
+            coefs["Covariates"] = pd.DataFrame(
+                self.reg_model.coef_.T,
                 index=self.covariates_cols,
-                columns=['Coefficient'],)
+                columns=["Coefficient"],
+            )
 
         return coefs
 
@@ -205,7 +237,7 @@ class MultiPRS(object):
         assert self.phenotype is not None
 
         self.reg_model = self.reg_model.fit(self.input_data, self.phenotype)
-    
+
     def save(self, output_file):
         """
         Save the parameters of the model to file.
@@ -214,16 +246,21 @@ class MultiPRS(object):
         try:
             check_is_fitted(self.reg_model)
         except NotFittedError:
-            raise NotFittedError("The model has not been fitted yet. Call `.fit() first.")
+            raise NotFittedError(
+                "The model has not been fitted yet. Call `.fit() first."
+            )
 
         with open(output_file, "wb") as outf:
-            pickle.dump([
-                self.reg_model,
-                self.expert_cols,
-                self.covariates_cols,
-                self.data_scaler,
-                self.family
-            ], outf)
+            pickle.dump(
+                [
+                    self.reg_model,
+                    self.expert_cols,
+                    self.covariates_cols,
+                    self.data_scaler,
+                    self.family,
+                ],
+                outf,
+            )
 
 
 class AncestryWeightedPRS(object):
@@ -232,26 +269,27 @@ class AncestryWeightedPRS(object):
     from gnomAD random forest classifier).
     """
 
-    def __init__(self,
-                 prs_dataset=None,
-                 expert_cols=None,
-                 covariates_cols=None,
-                 expert_ancestry_map=None,
-                 weighing_scheme='before',
-                 class_weights=None,
-                 add_intercept=True,
-                 standardize_data=True,
-                 penalty_type=None,
-                 penalty=0.):
-
+    def __init__(
+        self,
+        prs_dataset=None,
+        expert_cols=None,
+        covariates_cols=None,
+        expert_ancestry_map=None,
+        weighing_scheme="before",
+        class_weights=None,
+        add_intercept=True,
+        standardize_data=True,
+        penalty_type=None,
+        penalty=0.0,
+    ):
         # -------------------------------------------------------------------------
         # Sanity checks:
 
-        assert penalty >= 0.
-        if penalty > 0.:
+        assert penalty >= 0.0
+        if penalty > 0.0:
             assert penalty_type is not None
 
-        assert weighing_scheme in ('before', 'after')
+        assert weighing_scheme in ("before", "after")
         if prs_dataset is not None and expert_cols is not None:
             assert expert_ancestry_map is not None
 
@@ -281,23 +319,28 @@ class AncestryWeightedPRS(object):
         self.ancestry_weights_cols = None
 
         if self.expert_ancestry_map is not None:
-
             # Only keep PRS columns that are present in the mapping:
-            self.expert_cols = [col for col in self.expert_cols if col in self.expert_ancestry_map]
+            self.expert_cols = [
+                col for col in self.expert_cols if col in self.expert_ancestry_map
+            ]
 
             # Get ancestry weights columns that have corresponding PRS columns.
-            self.ancestry_weights_cols = [self.expert_ancestry_map[col] for col in self.expert_cols]
+            self.ancestry_weights_cols = [
+                self.expert_ancestry_map[col] for col in self.expert_cols
+            ]
 
             # Update the ancestry:PRS map based on the previous filtering steps:
-            self.expert_ancestry_map = {k: v for k, v in self.expert_ancestry_map.items()
-                                        if k in self.expert_cols}
+            self.expert_ancestry_map = {
+                k: v
+                for k, v in self.expert_ancestry_map.items()
+                if k in self.expert_cols
+            }
 
             assert len(self.expert_cols) > 1
             assert len(self.ancestry_weights_cols) > 1
 
         # Extract the data needed to train this model:
         if prs_dataset is not None:
-
             # If standardize_data is True, standardize the training data:
             if standardize_data:
                 prs_dataset.standardize_data()
@@ -318,36 +361,48 @@ class AncestryWeightedPRS(object):
 
         if self.input_data is not None:
             # Initialize the regression model:
-            if self.family == 'gaussian':
-                if penalty_type == 'l1':
+            if self.family == "gaussian":
+                if penalty_type == "l1":
                     self.reg_model = Lasso(alpha=penalty, fit_intercept=add_intercept)
-                elif penalty_type == 'l2':
+                elif penalty_type == "l2":
                     self.reg_model = Ridge(alpha=penalty, fit_intercept=add_intercept)
-                elif penalty_type == 'elasticnet':
-                    self.reg_model = ElasticNet(alpha=penalty, fit_intercept=add_intercept)
+                elif penalty_type == "elasticnet":
+                    self.reg_model = ElasticNet(
+                        alpha=penalty, fit_intercept=add_intercept
+                    )
                 else:
                     self.reg_model = LinearRegression(fit_intercept=add_intercept)
             else:
-                if penalty == 0.:
+                if penalty == 0.0:
                     penalty = np.inf
 
-                self.reg_model = LogisticRegression(fit_intercept=add_intercept,
-                                                    class_weight=class_weights,
-                                                    penalty=penalty_type,
-                                                    C=penalty)
+                self.reg_model = LogisticRegression(
+                    fit_intercept=add_intercept,
+                    class_weight=class_weights,
+                    penalty=penalty_type,
+                    C=penalty,
+                )
 
             # Create a separate model for each ancestry:
-            if self.weighing_scheme == 'after':
-                self.reg_model = {k: copy.deepcopy(self.reg_model) for k in self.input_data.keys()}
+            if self.weighing_scheme == "after":
+                self.reg_model = {
+                    k: copy.deepcopy(self.reg_model) for k in self.input_data.keys()
+                }
 
     @classmethod
     def from_saved_model(cls, param_file):
-
         model = cls()
         with open(param_file, "rb") as pf:
-            (model.reg_model, model.expert_cols, model.expert_ancestry_map,
-             model.ancestry_weights_cols, model.covariates_cols,
-             model.weighing_scheme, model.data_scaler, model.family) = pickle.load(pf)
+            (
+                model.reg_model,
+                model.expert_cols,
+                model.expert_ancestry_map,
+                model.ancestry_weights_cols,
+                model.covariates_cols,
+                model.weighing_scheme,
+                model.data_scaler,
+                model.family,
+            ) = pickle.load(pf)
 
         return model
 
@@ -389,92 +444,93 @@ class AncestryWeightedPRS(object):
 
         # Extract the covariates columns (if requested):
         if self.covariates_cols is not None:
-            covariates_data = [prs_dataset.get_data_columns(self.covariates_cols, scaler=scaler)]
+            covariates_data = [
+                prs_dataset.get_data_columns(self.covariates_cols, scaler=scaler)
+            ]
         else:
             covariates_data = []
 
-        if self.weighing_scheme == 'before':
+        if self.weighing_scheme == "before":
             weighted_prs = (prs_data * ancestry_weights).sum(axis=1).reshape(-1, 1)
 
             return {
-                'data': np.concatenate(covariates_data + [weighted_prs], axis=1),
-                'keep_samples': ancestry_weights.sum(axis=1) > .5,
-                'weights': None
+                "data": np.concatenate(covariates_data + [weighted_prs], axis=1),
+                "keep_samples": ancestry_weights.sum(axis=1) > 0.5,
+                "weights": None,
             }
         else:
-
             # If the weighing scheme is set to `after`, then we need to generate
             # a separate dataset for each ancestry group.
             input_data = {}
 
-            general_keep = ancestry_weights.sum(axis=1) > .5
+            general_keep = ancestry_weights.sum(axis=1) > 0.5
 
             for idx, anc_col in enumerate(self.ancestry_weights_cols):
                 keep_samples = (ancestry_weights[:, idx] > 0) & general_keep
                 if keep_samples.sum() > 0:
                     input_data[anc_col] = {
-                        'data': np.concatenate(covariates_data + [prs_data[:, idx].reshape(-1, 1)], axis=1),
-                        'keep_samples': keep_samples,
-                        'weights': ancestry_weights[:, idx]
+                        "data": np.concatenate(
+                            covariates_data + [prs_data[:, idx].reshape(-1, 1)], axis=1
+                        ),
+                        "keep_samples": keep_samples,
+                        "weights": ancestry_weights[:, idx],
                     }
             return input_data
 
     def predict(self, prs_dataset=None):
-
         if prs_dataset is None:
             input_data = self.input_data
         else:
             input_data = self._extract_input_data(prs_dataset, scaler=self.data_scaler)
 
-        if self.weighing_scheme == 'before':
+        if self.weighing_scheme == "before":
             if self.family == "gaussian":
-                pred = self.reg_model.predict(input_data['data']).flatten()
+                pred = self.reg_model.predict(input_data["data"]).flatten()
             else:
-                pred = self.reg_model.predict_proba(input_data['data'])[:, 1]
+                pred = self.reg_model.predict_proba(input_data["data"])[:, 1]
 
-            pred[~input_data['keep_samples']] = np.nan
+            pred[~input_data["keep_samples"]] = np.nan
         else:
             pred = None
             keep_samples = None
             for anc, dat in input_data.items():
                 if self.family == "gaussian":
-                    pred_anc = self.reg_model[anc].predict(dat['data']).flatten()
+                    pred_anc = self.reg_model[anc].predict(dat["data"]).flatten()
                 else:
-                    pred_anc = self.reg_model[anc].predict_proba(dat['data'])[:, 1]
+                    pred_anc = self.reg_model[anc].predict_proba(dat["data"])[:, 1]
 
                 if pred is None:
-                    pred = pred_anc*dat['weights']
-                    keep_samples = dat['keep_samples']
+                    pred = pred_anc * dat["weights"]
+                    keep_samples = dat["keep_samples"]
                 else:
-                    pred += pred_anc*dat['weights']
-                    keep_samples = keep_samples | dat['keep_samples']
+                    pred += pred_anc * dat["weights"]
+                    keep_samples = keep_samples | dat["keep_samples"]
 
             pred[~keep_samples] = np.nan
 
         return pred
 
     def get_coefficients(self):
-
         assert self.reg_model is not None
 
-        if self.weighing_scheme == 'before':
-            model = {'All': self.reg_model}
+        if self.weighing_scheme == "before":
+            model = {"All": self.reg_model}
         else:
             model = self.reg_model
 
         all_coefs = {}
 
         for k, v in model.items():
-            coefs = {'Intercept': v.intercept_}
+            coefs = {"Intercept": v.intercept_}
 
             if self.expert_cols is not None:
                 if self.covariates_cols is not None:
-                    coefs['Covariates'] = v.coef_[:self.C]
-                    coefs['PRS'] = v.coef_[self.C:]
+                    coefs["Covariates"] = v.coef_[: self.C]
+                    coefs["PRS"] = v.coef_[self.C :]
                 else:
-                    coefs['PRS'] = v.coef_
+                    coefs["PRS"] = v.coef_
             else:
-                coefs['Covariates'] = v.coef_
+                coefs["Covariates"] = v.coef_
 
             all_coefs[k] = coefs
 
@@ -487,15 +543,19 @@ class AncestryWeightedPRS(object):
         assert self.input_data is not None
         assert self.phenotype is not None
 
-        if self.weighing_scheme == 'before':
-            self.reg_model = self.reg_model.fit(self.input_data['data'][self.input_data['keep_samples']],
-                                                self.phenotype[self.input_data['keep_samples']])
+        if self.weighing_scheme == "before":
+            self.reg_model = self.reg_model.fit(
+                self.input_data["data"][self.input_data["keep_samples"]],
+                self.phenotype[self.input_data["keep_samples"]],
+            )
         else:
             for anc, dat in self.input_data.items():
                 # Fit a weighted model:
-                self.reg_model[anc] = self.reg_model[anc].fit(dat['data'][dat['keep_samples']],
-                                                              self.phenotype[dat['keep_samples']],
-                                                              sample_weight=dat['weights'][dat['keep_samples']])
+                self.reg_model[anc] = self.reg_model[anc].fit(
+                    dat["data"][dat["keep_samples"]],
+                    self.phenotype[dat["keep_samples"]],
+                    sample_weight=dat["weights"][dat["keep_samples"]],
+                )
 
     def save(self, output_file):
         """
@@ -503,23 +563,28 @@ class AncestryWeightedPRS(object):
         """
 
         try:
-            if self.weighing_scheme == 'before':
+            if self.weighing_scheme == "before":
                 check_is_fitted(self.reg_model)
             else:
                 for _, model in self.reg_model.items():
                     check_is_fitted(model)
         except NotFittedError:
-            raise NotFittedError("The model has not been fitted yet. Call `.fit() first.")
+            raise NotFittedError(
+                "The model has not been fitted yet. Call `.fit() first."
+            )
 
         # TODO
         with open(output_file, "wb") as outf:
-            pickle.dump([
-                self.reg_model,
-                self.expert_cols,
-                self.expert_ancestry_map,
-                self.ancestry_weights_cols,
-                self.covariates_cols,
-                self.weighing_scheme,
-                self.data_scaler,
-                self.family
-            ], outf)
+            pickle.dump(
+                [
+                    self.reg_model,
+                    self.expert_cols,
+                    self.expert_ancestry_map,
+                    self.ancestry_weights_cols,
+                    self.covariates_cols,
+                    self.weighing_scheme,
+                    self.data_scaler,
+                    self.family,
+                ],
+                outf,
+            )

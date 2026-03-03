@@ -2,35 +2,6 @@ import os.path as osp
 
 import pandas as pd
 
-MODEL_NAME_ANCESTRY_MAP = {
-    "PGS003843": "EUR",
-    "PGS003845": "AFR",
-    "PGS002360": "EAS",
-    "PGS003864": "AMR",
-    "PGS003862": "EUR",
-    "PGS003863": "AFR",
-    "PGS003865": "EAS",
-    "PGS002800": "CSA",
-    "PGS002801": "AFR",
-    "PGS002803": "EAS",
-    "PGS002804": "EUR",
-    "PGS002805": "AMR",
-    "PGS000894": "AMR",
-    "PGS000896": "CSA",
-    "PGS000890": "EAS",
-    "PGS000886": "AFR",
-    "PGS000892": "EUR",
-    "PGS003770": "AFR",
-    "PGS003775": "EAS",
-    "PGS003780": "CSA",
-    "PGS003768": "EUR",
-    "PGS000806": "AFR",
-    "PGS000805": "EUR",
-    "PGS000808": "AMR",
-    "PGS002311": "EUR",
-    "PGS002358": "EAS",
-}
-
 df = pd.read_csv(
     osp.join(osp.dirname(osp.dirname(__file__)), "tables/phenotype_prs_table.csv")
 )
@@ -49,6 +20,7 @@ BIOBANK_NAME_MAP_SHORT = {
 GROUP_MAP = {"0": "Female", "1": "Male"}
 
 SORTED_ANCESTRY_LABEL = ["All", "EUR", "MID", "CSA", "EAS", "AMR", "AFR", "OTH"]
+SORTED_COARSE_ANCESTRY_LABEL = ["All", "EUR", "non-EUR"]
 
 UKBB_SORTED_UMAP_CLUSTERS = [
     "All",
@@ -157,6 +129,8 @@ def assign_models_consistent_colors(models, palette="Set3"):
 
 
 def sort_groups(groups):
+    if "non-EUR" in groups:
+        return sorted(groups, key=lambda x: SORTED_COARSE_ANCESTRY_LABEL.index(x))
     if len(set(groups).intersection(SORTED_ANCESTRY_LABEL)) > 2:
         return sorted(groups, key=lambda x: SORTED_ANCESTRY_LABEL.index(x))
     elif len(set(groups).intersection(UKBB_SORTED_UMAP_CLUSTERS)) > 2:

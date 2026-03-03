@@ -5,7 +5,9 @@ executor=${1:-"sbatch"}
 
 mkdir -p ./log/evaluation/
 
-phenotypes=("CRTN" "HDL" "LDL" "LDL_adj" "TST" "BMI" "FEV1_FVC" "HEIGHT" "LOG_TG" "TC" "URT" "T2D" "ASTHMA")
+mapfile -t phenotypes < <(
+  find data/harmonized_data/ -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -u
+)
 
 for phenotype in "${phenotypes[@]}"
 do

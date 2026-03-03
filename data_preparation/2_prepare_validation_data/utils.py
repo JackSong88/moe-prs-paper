@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def detect_outliers(phenotype, sigma_threshold=3, stratify=None, nan_policy='omit'):
+def detect_outliers(phenotype, sigma_threshold=3, stratify=None, nan_policy="omit"):
     """
     Detect samples with outlier phenotype values.
     This function takes a vector of quantitative phenotypes,
@@ -27,7 +27,61 @@ def detect_outliers(phenotype, sigma_threshold=3, stratify=None, nan_policy='omi
     mask = np.zeros_like(phenotype, dtype=bool)
 
     for group in np.unique(stratify):
-        mask[stratify == group] = np.abs(zscore(phenotype[stratify == group],
-                                                nan_policy=nan_policy)) > sigma_threshold
+        mask[stratify == group] = (
+            np.abs(zscore(phenotype[stratify == group], nan_policy=nan_policy))
+            > sigma_threshold
+        )
 
     return mask
+
+
+def adjust_ldl_cholesterol_for_medication(dat, med_use_df):
+    """
+    Based on the GLGC consortium:
+        https://pmc.ncbi.nlm.nih.gov/articles/PMC8730582/#S7
+    """
+
+    merged_tab = dat.merge(med_use_df, on="IID")
+    merged_tab["phenotype"] = np.where(
+        merged_tab["chol_med"], merged_tab["phenotype"] / 0.7, merged_tab["phenotype"]
+    )
+
+    return merged_tab[["FID", "IID", "phenotype"]].copy()
+
+
+def adjust_total_cholesterol_for_medication(dat, med_use_df):
+    """
+    Based on the GLGC consortium:
+        https://pmc.ncbi.nlm.nih.gov/articles/PMC8730582/#S7
+    """
+    merged_tab = dat.merge(med_use_df, on="IID")
+    merged_tab["phenotype"] = np.where(
+        merged_tab["chol_med"], merged_tab["phenotype"] / 0.8, merged_tab["phenotype"]
+    )
+
+    return merged_tab[["FID", "IID", "phenotype"]].copy()
+
+
+def adjust_systolic_blood_pressure_for_medication(dat, med_use_df):
+    """
+    Based on: https://www.nature.com/articles/s41588-018-0205-x#Sec12
+    """
+
+    merged_tab = dat.merge(med_use_df, on="IID")
+    merged_tab["phenotype"] = np.where(
+        merged_tab["bp_med"], merged_tab["phenotype"] + 15, merged_tab["phenotype"]
+    )
+
+    return merged_tab[["FID", "IID", "phenotype"]].copy()
+
+
+def adjust_diastolic_blood_pressure_for_medication(dat, med_use_df):
+    """
+    Based on: https://www.nature.com/articles/s41588-018-0205-x#Sec12
+    """
+    merged_tab = dat.merge(med_use_df, on="IID")
+    merged_tab["phenotype"] = np.where(
+        merged_tab["bp_med"], merged_tab["phenotype"] + 10, merged_tab["phenotype"]
+    )
+
+    return merged_tab[["FID", "IID", "phenotype"]].copy()

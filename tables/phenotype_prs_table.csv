@@ -30,16 +30,26 @@ Log triglycerides,LOG_TG,"EFO_0004530",PGS003802,PGS003802,EUR,
 Log triglycerides,LOG_TG,"EFO_0004530",PGS003804,PGS003804,AFR,
 Log triglycerides,LOG_TG,"EFO_0004530",PGS003809,PGS003809,EAS,
 Log triglycerides,LOG_TG,"EFO_0004530",PGS003814,PGS003814,CSA,
-Type 2 Diabetes,T2D,"MONDO_0005148",PGS003735,PGS003735,AFR,
-Type 2 Diabetes,T2D,"MONDO_0005148",PGS003734,PGS003734,EAS,
-Type 2 Diabetes,T2D,"MONDO_0005148",PGS003733,PGS003733,EUR,
-Type 2 Diabetes,T2D,"MONDO_0005148",PGS003732,PGS003732,AMR,
-Type 2 Diabetes,T2D,"MONDO_0005148",PGS003731,PGS003731,CSA,
-Asthma,ASTHMA,"MONDO_0004979",PGS002358,PGS002358,EAS,
-Asthma,ASTHMA,"MONDO_0004979",PGS002311,PGS002311,EUR,
+Diastolic blood pressure,DBP,"EFO_0006336",PGS003961,PGS003961,AFR,
+Diastolic blood pressure,DBP,"EFO_0006336",PGS003962,PGS003962,EAS,
+Diastolic blood pressure,DBP,"EFO_0006336",PGS003963,PGS003963,EUR,
+Systolic blood pressure,SBP,"EFO_0006335",PGS003965,PGS003965,AFR,
+Systolic blood pressure,SBP,"EFO_0006335",PGS003966,PGS003966,EAS,
+Systolic blood pressure,SBP,"EFO_0006335",PGS003967,PGS003967,EUR,
+Type 2 Diabetes,T2D,"MONDO_0005148",PGS005243,PGS005243,AFR,
+Type 2 Diabetes,T2D,"MONDO_0005148",PGS005245,PGS005245,EAS,
+Type 2 Diabetes,T2D,"MONDO_0005148",PGS005246,PGS005246,EUR,
+Type 2 Diabetes,T2D,"MONDO_0005148",PGS005244,PGS005244,AMR,
+Type 2 Diabetes,T2D,"MONDO_0005148",PGS005247,PGS005247,CSA,
+Asthma,ASTHMA,"MONDO_0004979",PGS005121,PGS005121,AFR,
+Asthma,ASTHMA,"MONDO_0004979",PGS005128,PGS005128,EAS,
+Asthma,ASTHMA,"MONDO_0004979",PGS005134,PGS005134,EUR,
+Asthma,ASTHMA,"MONDO_0004979",PGS005140,PGS005140,CSA,
 Testosterone,TST,"EFO_0004908",PGS_TST_M,,Male,"PRS Inference using VIPRS. Sumstats from: https://zenodo.org/records/7222725"
 Testosterone,TST,"EFO_0004908",PGS_TST_F,,Female,"PRS Inference using VIPRS. Sumstats from: https://zenodo.org/records/7222725"
 Urate,URT,"EFO_0004531",PGS_URT_M,,Male,"PRS Inference using VIPRS. Sumstats from: https://zenodo.org/records/7222725"
 Urate,URT,"EFO_0004531",PGS_URT_F,,Female,"PRS Inference using VIPRS. Sumstats from: https://zenodo.org/records/7222725"
 Creatinine,CRTN,"EFO_0004518",PGS_CRTN_M,,Male,"PRS Inference using VIPRS. Sumstats from: https://zenodo.org/records/7222725"
 Creatinine,CRTN,"EFO_0004518",PGS_CRTN_F,,Female,"PRS Inference using VIPRS. Sumstats from: https://zenodo.org/records/7222725"
+Waist-hip ratio,WHR,"EFO_0004343",PGS_WHR_M,,Male,"PRS Inference using VIPRS. Sumstats from: https://zenodo.org/records/7222725"
+Waist-hip ratio,WHR,"EFO_0004343",PGS_WHR_F,,Female,"PRS Inference using VIPRS. Sumstats from: https://zenodo.org/records/7222725"

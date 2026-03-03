@@ -2,7 +2,7 @@
 
 source env/moe/bin/activate
 
-phenotypes=("URT" "CRTN" "TST")
+phenotypes=("URT" "CRTN" "TST" "WHR")
 strata=("M" "F")
 
 
@@ -12,10 +12,9 @@ do
   rm -rf "data/pgs_weights/${phenotype}/"*
   for stratum in "${strata[@]}"
   do
-    viprs_fit -l "data/ld/ukbb_50k_windowed/int8/chr_*/" \
+    viprs_fit -l "data/ld/EUR/chr_*/" \
               -s "data/external_sumstats/sex_stratified/${phenotype}/${stratum}.glm.linear" \
               --sumstats-format "plink2" \
-              --max-iter 10000 \
               --output-dir "data/pgs_weights/${phenotype}/" \
               --output-file-prefix "${stratum}_"
     python3 data_preparation/1_prepare_pgs_weights/utils/harmonize_inferred_beta.py \

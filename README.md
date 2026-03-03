@@ -1,6 +1,6 @@
 # Personalized polygenic risk prediction and assessment with a Mixture-of-Experts framework (2025)
 
-Shadi Zabad, Yue Li, Simon Gravel
+Shadi Zabad, Junyi Song, Yue Li, Simon Gravel
 
 **McGill University**
 

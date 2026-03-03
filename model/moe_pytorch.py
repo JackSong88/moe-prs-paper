@@ -1,4 +1,3 @@
-import pickle
 import numpy as np
 from functools import partial
 
@@ -13,15 +12,13 @@ try:
 except ImportError:
     pass
 
-import argparse
-from PRSDataset import PRSDataset
-
 try:
     import torchsort
 except ImportError:
     torchsort = None
 
 import os
+import torch.nn.functional as F
 
 def configure_cpu_threads(cpus_per_task: int, num_workers: int, interop_threads: int = 1):
     """
@@ -99,6 +96,56 @@ class ConvergenceCheck(pl.callbacks.Callback):
         else:
             self.best_loss = current_loss
             self.best_params = current_params
+
+class DelayedEarlyStopping(pl.callbacks.Callback):
+    def __init__(self, monitor="val_loss", min_epoch=100, patience=10, mode="min", min_delta=0.0):
+        super().__init__()
+        self.monitor = monitor
+        self.min_epoch = int(min_epoch)
+        self.patience = int(patience)
+        self.mode = mode
+        self.min_delta = float(min_delta)
+        self.best = None
+        self.num_bad = 0
+
+    def on_fit_start(self, trainer, pl_module):
+        self.best = None
+        self.num_bad = 0
+
+    def on_validation_end(self, trainer, pl_module):
+        # trainer.current_epoch is 0-indexed; compare using 1-indexed epoch count
+        epoch = int(trainer.current_epoch) + 1
+        if epoch < self.min_epoch:
+            return
+
+        metrics = trainer.callback_metrics
+        current = metrics.get(self.monitor, None)
+        if current is None:
+            return
+
+        if isinstance(current, torch.Tensor):
+            current = float(current.detach().cpu().item())
+        else:
+            current = float(current)
+
+        if self.best is None:
+            self.best = current
+            self.num_bad = 0
+            return
+
+        if self.mode == "min":
+            improved = current < (self.best - self.min_delta)
+        else:
+            improved = current > (self.best + self.min_delta)
+
+        if improved:
+            self.best = current
+            self.num_bad = 0
+        else:
+            self.num_bad += 1
+            if self.num_bad >= self.patience:
+                trainer.should_stop = True
+
 
 class IndexSubset(Dataset):
     """
@@ -185,21 +232,6 @@ def gaussian_moe_nll(expert_weights, expert_predictions, phenotype, sigma2, eps=
 
     return -(torch.logsumexp(logw + loglik, dim=1)).mean()
 
-# def gaussian_moe_loss_exp_weighted(expert_weights, expert_predictions, phenotype, sigma2, eps=1e-12):
-
-#     y = phenotype.view(-1, 1)
-#     sigma2 = sigma2.view(1, -1).clamp_min(eps)                      # (1,K)
-    
-#     # Square residuals
-#     resid2 = (expert_predictions - y) ** 2                          # (N,K)
-
-#     # Calculate NLL for EACH expert independently
-#     expert_nll = 0.5 * (torch.log(2.0 * np.pi * sigma2) + resid2 / sigma2) # (N,K)
-
-#     weighted_loss = (expert_weights * expert_nll).sum(dim=1)        # (N,)
-
-#     return weighted_loss.mean()
-
 #########################################################
 # Define a PyTorch Lightning module to streamline training
 class Lit_MoEPRS(pl.LightningModule):
@@ -222,13 +254,17 @@ class Lit_MoEPRS(pl.LightningModule):
                  topk_k=None,        # None = disable top-k
                  tau_start=1.0,      # 1.0 = no temperature
                  tau_end=1.0,        # 1.0 = no temperature
+                 tau_warm_epochs=0,
+                 tau_decay_epochs=0,
                  hard_ste=True,      # straight-through estimator
                  lb_coef=0.0,        # 0.0 = disable load-balancing aux loss
                  eps=1e-12,
 
                  use_per_expert_bias = True,
                  use_global_head = True,
-                 global_head_bias=True):
+                 global_head_bias=True,
+                 binomial_logit_level = False,
+                 center_expert_covariates: bool = True):
         """
         A PyTorch Lightning module for training a mixture of experts model.
 
@@ -247,12 +283,15 @@ class Lit_MoEPRS(pl.LightningModule):
 
         super().__init__()
 
+        self.center_expert_covariates = bool(center_expert_covariates)
+
         # -------------------------------------------------------
         # Sanity checks for the inputs:
         assert loss in ("likelihood_mixture",
                         "likelihood_mixture2",
                         "ensemble_mixture",
-                        "likelihood_mixture_sigma")
+                        "likelihood_mixture_sigma",
+                        "logit_level_bce")
         assert optimizer in ("Adam", "LBFGS", "SGD")
         assert family in ("gaussian", "binomial")
 
@@ -283,7 +322,7 @@ class Lit_MoEPRS(pl.LightningModule):
         # If per-expert covariates are provided, allow coefficients and use them alongside an intercept. (gamma_k*S_k + covariates * covar_coefficients + intercept)
         if self.n_expert_covariates > 0:
             self.expert_scaler = nn.ModuleList([
-                LinearScaler(self.n_expert_covariates, family=family, bias=True)
+                LinearScaler(self.n_expert_covariates, family=family, bias=False)
                 for _ in range(self.n_experts)
             ])
         # Otherwise, expert linear scaler only (gamma_k*S_k)
@@ -295,11 +334,9 @@ class Lit_MoEPRS(pl.LightningModule):
         
 
         '''
-        Optional Automatic Relevance Determination (ARD)-style per-expert intercepts with shared scale parameter:
-
         expert_intercept_k = kappa · b_k, where kappa is global scale (shared across experts)
 
-        "group shrinkage" / ARD mechanism: kappa acts like an on/off knob for the whole bias block, makes the model more robust by
+        "group shrinkage" kappa acts like an on/off knob for the whole bias block, makes the model more robust by
         keeping the model parsimonious unless intercept differences are clearly supported by the data.
         '''
         self.use_per_expert_bias = use_per_expert_bias
@@ -329,6 +366,16 @@ class Lit_MoEPRS(pl.LightningModule):
 
         # Optimizer options:
         self.family = family
+
+        self.binomial_logit_level = bool(binomial_logit_level)
+
+        # If user asks for logit-level binomial, force the right loss key.
+        # (Otherwise they'd accidentally optimize the wrong objective.)
+        if self.family == "binomial" and self.binomial_logit_level:
+            self.loss = "logit_level_bce"
+        else:
+            self.loss = loss
+
         self.optimizer = optimizer
         self.lr = learning_rate
         self.weight_decay = weight_decay
@@ -358,22 +405,21 @@ class Lit_MoEPRS(pl.LightningModule):
         #temperature scheduling
         self.tau_start = float(tau_start)
         self.tau_end   = float(tau_end)
+        self.tau_warm_epochs = int(tau_warm_epochs)
+        self.tau_decay_epochs = int(tau_decay_epochs)
         self.hard_ste  = bool(hard_ste)
         self.lb_coef   = float(lb_coef) #load balancing coefficient
         self.eps       = float(eps)
 
         # for guassian MoE with per-expert residual variance
         if family == "gaussian":
-            # amortized residual variance per expert
+            # estimated residual variance per expert
             self.log_sigma2 = nn.Parameter(torch.zeros(self.n_experts))  # init sigma2=1
             self.min_sigma2 = 1e-2
 
             self.metrics["likelihood_mixture_sigma"] = (
                 lambda w, yhat, y: gaussian_moe_nll(w, yhat, y, self.sigma2, eps=self.eps)
             )
-            # self.metrics["likelihood_mixture_sigma"] = (
-                # lambda w, yhat, y: gaussian_moe_loss_exp_weighted(w, yhat, y, self.sigma2, eps=self.eps)
-            # )
 
     @property
     def n_experts(self):
@@ -424,16 +470,26 @@ class Lit_MoEPRS(pl.LightningModule):
         return b
 
     def batch_step(self, batch, batch_idx):
+        w = self.gate_forward(batch)  # (N,K)
 
-        proba = self.gate_forward(batch)
-        scaled_pred = self.scale_expert_predictions(batch)
+        # ---- logit-mixing moe model ----
+        if self.family == "binomial" and self.binomial_logit_level:
+            y = batch["phenotype"].view(-1).float()          # (N,)
+            g = self._global_logit(batch)                    # (N,)
+            eta_k = self._expert_logits_only(batch)          # (N,K)
+
+            eta = g + (w * eta_k).sum(dim=1)                 # (N,)  <-- your equation
+            loss = F.binary_cross_entropy_with_logits(eta, y)
+
+            return {"logit_level_bce": loss}
+
+        # ---- Probability-mixing default moe model ----
+        scaled_pred = self.scale_expert_predictions(batch)   # (N,K) probs for binomial, means for gaussian
 
         losses = {}
+        for m, loss_fn in self.metrics.items():
+            losses[m] = loss_fn(w, scaled_pred, batch["phenotype"])
 
-        for m, loss in self.metrics.items():
-            losses[m] = loss(proba, scaled_pred, batch['phenotype'])
-
-            # If we're using L-BFGS for optimization, add weight decay manually:
             if self.weight_decay > 0. and self.optimizer == "LBFGS":
                 losses[m] += self.weight_decay * torch.norm(self.gate_model.gate[0].weight, p=2)
                 if self.n_expert_covariates > 0:
@@ -512,72 +568,157 @@ class Lit_MoEPRS(pl.LightningModule):
 
         return total
 
+    def _expert_logits_only(self, batch):
+        """
+        Returns eta_{ik} (N,K) WITHOUT global covariate term.
+        Includes per-expert covariates (if enabled) because they are part of the expert scaler.
+        Optionally includes per-expert bias (if enabled).
+        """
+        expert_covariates = batch.get("expert_covariates", None)
+
+        logits = torch.cat([
+            expert_scaler.forward(
+                batch["experts"][:, i],
+                covar=expert_covariates,
+                return_logits=True
+            )
+            for i, expert_scaler in enumerate(self.expert_scaler)
+        ], dim=1)  # (N,K)
+
+        # per expert bias
+        if self.use_per_expert_bias:
+            kappa = self.expert_bias_scale
+            b = self.expert_bias_centered
+            logits = logits + (kappa * b).view(1, -1)
+
+        return logits
+
+
+    def _global_logit(self, batch):
+        """
+        Returns g_i (N,) = alpha_0 + C_i * alpha, added ONCE outside the mix of logits.
+        """
+        if self.use_global_head and (self.global_head is not None):
+            global_in = batch.get("global_input", batch["gate_input"])
+            return self.global_head(global_in).squeeze(-1)  # (N,)
+        return torch.zeros(batch["experts"].shape[0], device=self.device)
+
+
     def scale_expert_predictions(self, batch):
+        expert_covariates = batch.get("expert_covariates", None)
 
-        if 'expert_covariates' in batch:
-            expert_covariates = batch['expert_covariates']
-        else:
-            expert_covariates = None
-
-        preds= torch.cat([expert_scaler.forward(batch['experts'][:, i], covar=expert_covariates)
-                          for i, expert_scaler in enumerate(self.expert_scaler)],
-                         dim=1)
-        
-        #global covariate head and intercepts
+        # binomial
         if self.family == "binomial":
-            # use logits and not probabilities for binomial family
+            # Compute per-expert logits (N,K): eta_{ik} from each expert scaler
+            # includes per expert covariaties if used
             logits = torch.cat([
                 expert_scaler.forward(
-                    batch['experts'][:, i],
+                    batch["experts"][:, i],
                     covar=expert_covariates,
                     return_logits=True
                 )
                 for i, expert_scaler in enumerate(self.expert_scaler)
             ], dim=1)  # (N,K)
 
-            if self.use_global_head and (self.global_head is not None):
-                global_in = batch.get('global_input', batch['gate_input'])
-                g = self.global_head(global_in).squeeze(-1)          # (N,)
-                logits = logits + g.unsqueeze(1)                     # broadcast to (N,K)
-
+            # if per expert bias i used
             if self.use_per_expert_bias:
                 kappa = self.expert_bias_scale
                 b = self.expert_bias_centered
                 logits = logits + (kappa * b).view(1, -1)
 
-            # finally convert to probabilities once
-            probs = torch.sigmoid(logits)
-            return probs
-        else: 
+            # If working on the mix of logits scale
+            if getattr(self, "binomial_logit_level", False):
+                # instead of probabilities, return the logits to be mixed
+                return logits
+
+            # Otherwise (default): probability-mixing / mixture losses expect per-expert probabilities,
+            # and the global head should be added before the sigmoid to constrain the probabilities to be [0,1]
             if self.use_global_head and (self.global_head is not None):
-                global_in = batch.get('global_input', batch['gate_input'])    
-                g = self.global_head(global_in).squeeze(-1)                    
-                g = g.unsqueeze(1).expand(-1, preds.size(1))                   
-                preds = preds + g
+                global_in = batch.get("global_input", batch["gate_input"])
+                g = self.global_head(global_in).squeeze(-1)      # (N,)
+                logits = logits + g.unsqueeze(1)                 # (N,K)
 
-            if self.use_per_expert_bias:
-                kappa = self.expert_bias_scale                      # scalar
-                b = self.expert_bias_centered
-                preds = preds + (kappa * b).view(1, -1)   # broadcast to (N, K)
+            # return probabilities for mixing
+            return torch.sigmoid(logits)   
 
+        # -------------------------
+        # Gaussian
+        # -------------------------
+        preds = torch.cat([
+            expert_scaler.forward(batch["experts"][:, i], covar=expert_covariates)
+            for i, expert_scaler in enumerate(self.expert_scaler)
+        ], dim=1)  # (N,K)
 
-            return preds
+        if self.use_global_head and (self.global_head is not None):
+            global_in = batch.get("global_input", batch["gate_input"])
+            g = self.global_head(global_in).squeeze(-1)          # (N,)
+            preds = preds + g.unsqueeze(1).expand(-1, preds.size(1))
+
+        if self.use_per_expert_bias:
+            kappa = self.expert_bias_scale
+            b = self.expert_bias_centered
+            preds = preds + (kappa * b).view(1, -1)
+
+        return preds
 
     def _current_tau(self):
         # if no trainer, default to final value
         try:
-            trainer = self.trainer  # this property raises if not attached
-            max_epochs = getattr(trainer, "max_epochs", None)
+            _ = self.trainer
         except Exception:
             return self.tau_end
 
-        if max_epochs is None:
+        e = int(getattr(self, "current_epoch", 0))
+
+        # No schedule => constant
+        if self.tau_warm_epochs <= 0 and self.tau_decay_epochs <= 0:
             return self.tau_start
 
-        T = max(1, int(max_epochs) - 1)
-        t = min(max(0, int(getattr(self, "current_epoch", 0))), T)
-        return self.tau_start + (self.tau_end - self.tau_start) * (t / T)
-    
+        # Warmup: keep tau_start
+        if e < self.tau_warm_epochs:
+            return self.tau_start
+
+        # Linear decay
+        if e < self.tau_warm_epochs + self.tau_decay_epochs:
+            t = (e - self.tau_warm_epochs) / max(1, self.tau_decay_epochs)
+            return self.tau_start + (self.tau_end - self.tau_start) * t
+
+        # After schedule
+        return self.tau_end
+
+    def _project_expert_covariate_weights_(self):
+        """
+        Enforce identifiability when BOTH:
+          - global covariate head exists (so alpha is present)
+          - per-expert covariate slopes exist (beta_k is present)
+
+        Constraint: Center covariates so 1/N * \sum_k beta_k = 0 so the model is identifiable.
+        """
+        if not getattr(self, "center_expert_covariates", False):
+            return
+        if self.n_expert_covariates <= 0:
+            return
+        if not (self.use_global_head and (self.global_head is not None)):
+            # If no global head, don't center (would remove mean effect capacity).
+            return
+
+        # Each expert scaler has weight shape (1, 1 + n_expert_covariates)
+        with torch.no_grad():
+            cov_w = torch.stack(
+                [m.linear_model.weight[0, 1:].detach() for m in self.expert_scaler],
+                dim=0
+            )  # (K, p)
+
+            cov_mean = cov_w.mean(dim=0, keepdim=True)  # (1, p)
+            cov_centered = cov_w - cov_mean             # (K, p)
+
+            for k, m in enumerate(self.expert_scaler):
+                m.linear_model.weight[0, 1:].copy_(cov_centered[k])
+
+    def on_train_batch_end(self, outputs, batch, batch_idx):
+        # This runs after Lightning has done the optimizer step for the batch.
+        self._project_expert_covariate_weights_()
+
     def _current_ent_coef(self):
         # if no trainer, default to final value
         try:
@@ -613,26 +754,40 @@ class Lit_MoEPRS(pl.LightningModule):
         return p_tau
 
     def _apply_topk(self, p):
-
         # p: (N,K) after temperature
         if self.topk_k is None or self.topk_k >= self.n_experts:
             return p
-        
+
+        k = int(self.topk_k)
+
+        # ---- smooth / differentiable approximation ----
         if torchsort is None:
-            raise ImportError("topk_k requires torchsort. Install torchsort or set topk_k=None.")
-        
-        # Compute soft ranks (differentiable)
+            # fallback: hard only (no smooth surrogate)
+            vals, idx = torch.topk(p, k, dim=1)
+            hard_mask = torch.zeros_like(p).scatter_(1, idx, 1.0)
+            p_hard = p * hard_mask
+            return p_hard / (p_hard.sum(dim=1, keepdim=True) + self.eps)
+
         ranks = torchsort.soft_rank(-p, regularization_strength=1.0)  # (N, K)
-
-        # Smooth "is in top-k" mask: ≈1 if rank <= k, ≈0 if rank >> k.
         sharpness = 10.0
-        threshold = float(self.topk_k) + 0.5
-        mask = torch.sigmoid((threshold - ranks) * sharpness)        # (N, K)
+        threshold = float(k) + 0.5
+        mask = torch.sigmoid((threshold - ranks) * sharpness)         # (N, K)
 
-        # Apply mask and renormalize rows to sum to 1
-        p_topk = p * mask
-        p_topk = p_topk / (p_topk.sum(dim=1, keepdim=True) + self.eps)
-        return p_topk
+        p_soft = p * mask
+        p_soft = p_soft / (p_soft.sum(dim=1, keepdim=True) + self.eps)
+
+        # If you want fully smooth behavior, stop here:
+        if not self.hard_ste:
+            return p_soft
+
+        # ---- hard top-k forward pass (EXACTLY k active) ----
+        vals, idx = torch.topk(p, k, dim=1)
+        hard_mask = torch.zeros_like(p).scatter_(1, idx, 1.0)
+        p_hard = p * hard_mask
+        p_hard = p_hard / (p_hard.sum(dim=1, keepdim=True) + self.eps)
+
+        # STE: forward uses p_hard, backward uses p_soft
+        return p_hard + (p_soft - p_soft.detach())
 
     def gate_forward(self, batch, return_dense=False):
         # base dense softmax from GateModel: (N,K)
@@ -648,7 +803,17 @@ class Lit_MoEPRS(pl.LightningModule):
 
 
     def forward(self, batch):
-        return (self.gate_forward(batch)*self.scale_expert_predictions(batch)).sum(axis=1)
+        w = self.gate_forward(batch)  # (N,K)
+
+        # if working with mixture of logits
+        if self.family == "binomial" and self.binomial_logit_level:
+            g = self._global_logit(batch)              # (N,)
+            eta_k = self._expert_logits_only(batch)    # (N,K)
+            eta = g + (w * eta_k).sum(dim=1)           # (N,)
+            return torch.sigmoid(eta)                  # (N,)
+
+        # existing behavior
+        return (w * self.scale_expert_predictions(batch)).sum(axis=1)
 
     def predict(self, batch):
 
@@ -670,6 +835,35 @@ class Lit_MoEPRS(pl.LightningModule):
         dat = DataLoader(prs_dataset, batch_size=prs_dataset.N, shuffle=False)
 
         return self.forward(next(iter(dat))).detach().numpy()
+
+    def predict_cov_only_from_dataset(self, prs_dataset):
+        """
+        Covariate-only prediction by zeroing PRS inputs at inference.
+        Used for null adjusted model including possible non-linear covariate contributions for
+        proper evaluation of incremental-r2
+
+        Keeps:
+            - gate_forward(C)
+            - per-expert covariate slopes (if add_covariates_to_experts)
+            - global_head(C)
+            - per-expert bias block (kappa*b)
+            - per-expert sigma2 stuff (gaussian) is irrelevant here (prediction only)
+
+        Removes:
+            - PRS contribution (gamma_k * S_ik) because experts[:,k] is set to 0
+        """
+        prs_dataset.set_backend("torch")
+        dat = DataLoader(prs_dataset, batch_size=prs_dataset.N, shuffle=False)
+        batch = next(iter(dat))
+
+        batch2 = {}
+        for k, v in batch.items():
+                batch2[k] = v.clone() if torch.is_tensor(v) else v
+
+        batch2["experts"] = torch.zeros_like(batch2["experts"])
+
+        with torch.no_grad():
+                return self.forward(batch2).detach().cpu().numpy()
 
     def predict_proba(self, batch):
 
@@ -863,9 +1057,6 @@ def get_ancestry_balanced_sampler(dataset, balance_lambda: float = 0.3):
 def train_model(lit_model, dataset, max_epochs=100, prop_validation=0.2, batch_size=None, 
                 weigh_samples=False, seed=8, split_seed=8, ancestry_balance_lambda=0.3):
 
-    #deterministic for reproducibility
-    # make_deterministic(seed)
-
     dataset.set_backend("torch")
     
     # Split the dataset into training and validation sets:
@@ -960,22 +1151,17 @@ def train_model(lit_model, dataset, max_epochs=100, prop_validation=0.2, batch_s
     log_dir = osp.join("lightning_logs", dataset.phenotype_col)
     logger = CSVLogger(save_dir=log_dir, name="MoE-PyTorch")
 
+    schedule_end = 150
+
     trainer = pl.Trainer(max_epochs=max_epochs,
                          deterministic=True,
                         #  logger = logger,
                         logger = False,
                         num_sanity_val_steps=0,
                          callbacks=[
-                            pl.callbacks.EarlyStopping(
-                                monitor="val_loss",
-                                patience=10,
-                                check_finite=True,
-                                check_on_train_epoch_end=True,
-                                verbose=False
-                            ),
+                            DelayedEarlyStopping(monitor="val_loss", min_epoch=schedule_end, patience=10, mode="min"),
                             ckpt_callback,
                             ConvergenceCheck()
-                            # StochasticWeightAveraging(swa_lrs=1e-4, swa_epoch_start=0.4)
                         ])
 
     trainer.fit(model=lit_model,

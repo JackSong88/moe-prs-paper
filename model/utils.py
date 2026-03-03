@@ -139,6 +139,7 @@ def incremental_r2_matched_null(true_val, full_pred, null_pred, covariates):
     full_pred = np.asarray(full_pred).reshape(-1)
     null_pred = np.asarray(null_pred).reshape(-1)
 
+    # genetic increment (what changes when you "turn on PRS")
     gen_pred = full_pred - null_pred
 
     if covariates is None:
@@ -147,16 +148,19 @@ def incremental_r2_matched_null(true_val, full_pred, null_pred, covariates):
     else:
         add_intercept = True
 
+    # Null (matched) evaluation regression: y ~ C + null_pred
     null_res = fit_linear_model(
         true_val,
         covariates.assign(null_pred=null_pred),
-        add_intercept=add_intercept,
+        add_intercept=add_intercept
     )
 
+    # Full (matched) evaluation regression: y ~ C + null_pred + gen_pred
     full_res = fit_linear_model(
         true_val,
         covariates.assign(null_pred=null_pred, gen_pred=gen_pred),
-        add_intercept=add_intercept,
+        # covariates.assign(null_pred=null_pred, full_pred=full_pred),
+        add_intercept=add_intercept
     )
 
     return full_res.rsquared - null_res.rsquared

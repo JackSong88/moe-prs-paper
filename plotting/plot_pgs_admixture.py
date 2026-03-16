@@ -1,22 +1,18 @@
 import argparse
-import copy
-import os
 import os.path as osp
-import pickle
 import sys
 
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from magenpy.utils.system_utils import makedir
 
 parent_dir = osp.dirname(osp.dirname(osp.abspath(__file__)))
 sys.path.append(parent_dir)
 sys.path.append(osp.join(parent_dir, "model/"))
 
 # Torch/Lightning only needed for .pt
-import torch
 from gate_interpretation import plot_expert_weights
-from magenpy.utils.system_utils import makedir
 from moe import MoEPRS
 from moe_pytorch import Lit_MoEPRS
 from moe_pytorch_inference import load_model_any
@@ -30,12 +26,13 @@ def plot_admixture_graphs(
     title=None,
     output_file=None,
     group_col=None,
+    sort_col=None,
+    sorted_groups=None,
     min_group_size=50,
     subsample_within_groups=False,
     agg_mechanism="mean",
     figsize="auto",
     palette="Set3",
-    sorted_groups=None,
     drop_legend=False,
     tick_rotation=90,
 ):
@@ -53,6 +50,10 @@ def plot_admixture_graphs(
         mapped_prs_ids.append(MODEL_NAME_MAP.get(prs_id, prs_id))
 
     proba = pd.DataFrame(proba, columns=mapped_prs_ids)
+
+    # If the user requests, add a sorting column:
+    if sort_col is not None:
+        proba[sort_col] = prs_dataset.get_data_columns(sort_col).flatten()
 
     if group_col is not None:
         proba[group_col] = prs_dataset.get_data_columns(group_col).flatten()
@@ -104,6 +105,7 @@ def plot_admixture_graphs(
             agg_col=group_col,
             agg_mechanism=agg_mechanism,
             agg_order=sorted_groups,
+            sort_col=sort_col,
             figsize=figsize,
             title=title,
             palette=palette,
@@ -114,6 +116,7 @@ def plot_admixture_graphs(
     else:
         return plot_expert_weights(
             proba,
+            sort_col=sort_col,
             title=title,
             palette=palette,
             agg_order=sorted_groups,

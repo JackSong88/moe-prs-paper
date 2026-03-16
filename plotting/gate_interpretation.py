@@ -7,6 +7,8 @@ from plot_utils import (
     MODEL_NAME_MAP,
     assign_models_consistent_colors,
 )
+from scipy.stats import entropy
+from sklearn.decomposition import PCA
 
 
 def plot_expert_weights_wrt_gate_input(moe_model, dataset, steps=1000):
@@ -250,14 +252,75 @@ def sort_admixture_by_dominant(q_mat: np.ndarray) -> np.ndarray:
     return sorted_q_mat, sort_indices
 
 
+def sort_pgs_weights_df(df, method="pca", compA=None, compB=None, random_state=0):
+    """
+    Return index order for plotting ADMIXTURE bars for large n (100k+).
+
+    Parameters
+    ----------
+    df : DataFrame (n_samples x K) rows sum ~1
+    method : one of {'pca','dominant','entropy','diff'}
+    compA, compB : column names or indices used for 'diff' (compA - compB)
+    """
+    X = df.values  # (n, K)
+    n = X.shape[0]
+
+    if method == "pca":
+        # randomized, very fast; only 1 component
+        pca = PCA(n_components=1, svd_solver="randomized", random_state=random_state)
+        scores = pca.fit_transform(X).ravel()
+        order = np.argsort(scores)
+
+    elif method == "dominant":
+        # argmax grouping, then sort inside groups by that component value descending
+        # returns groups in order of component index (you can change to column-mean order)
+        argmax = np.argmax(X, axis=1)
+        # optional: order components by their mean abundance to make colors consistent
+        comp_order = np.argsort(X.mean(axis=0))[::-1]  # largest mean first
+        order_list = []
+        for c in comp_order:
+            members = np.where(argmax == c)[0]
+            if members.size == 0:
+                continue
+            # descending so most "pure" first; change ascending if you prefer
+            sorted_members = members[np.argsort(-X[members, c])]
+            order_list.append(sorted_members)
+        order = np.concatenate(order_list) if order_list else np.arange(n)
+
+    elif method == "entropy":
+        # Shannon entropy per row (natural log). Low entropy --> more "pure"
+        # clip to avoid log(0)
+        ent = entropy(np.clip(X, 1e-12, None), base=np.e, axis=1)
+        order = np.argsort(ent)
+
+    elif method == "diff":
+        if compA is None or compB is None:
+            raise ValueError("compA and compB must be provided for method='diff'")
+
+        # accept column names or indices
+        def _col_index(c):
+            if isinstance(c, str):
+                return df.columns.get_loc(c)
+            return int(c)
+
+        ia, ib = _col_index(compA), _col_index(compB)
+        score = X[:, ia] - X[:, ib]
+        order = np.argsort(score)
+
+    else:
+        raise ValueError("method must be one of 'pca','dominant','entropy','diff'")
+
+    return df.iloc[order]
+
+
 def plot_expert_weights(
     pgs_weights_df,
     agg_col=None,
     agg_mechanism="mean",
     agg_order=None,
+    sort_col=None,
     title=None,
     figsize=(12, 6),
-    color_ascending=False,
     drop_legend=False,
     palette="gist_ncar",
     tick_rotation=90,
@@ -266,31 +329,23 @@ def plot_expert_weights(
     if agg_col is not None:
         assert agg_mechanism in ["mean", "sort"]
 
+    # Find out what are the meta columns in the passed dataframe.
+    # Meta columns are columns used for aggregating / sorting the mixing weights
+    meta_cols = []
+    if agg_col is not None:
+        meta_cols.append(agg_col)
+    if sort_col is not None:
+        meta_cols.append(sort_col)
+
+    # Remaining columns correspond to mixing weights:
+    prs_cols = [c for c in pgs_weights_df.columns if c not in meta_cols]
+
     add_color = []
-
-    def sort_pgs_weights_df(df):
-        """
-        Sort the individuals in the PGS weights data frame based on the maximum
-        weight across the experts.
-
-        TODO: Figure out a better way to sort the samples for smoother figures.
-
-        """
-
-        return df.sort_values(
-            list(df.mean(axis=0).sort_values(ascending=color_ascending).index.values)
-        )
-
-        # sorted_mat, sorted_indices = sort_admixture_by_dominant(df.values)
-
-        # return pd.DataFrame(sorted_mat, columns=df.columns, index=sorted_indices)
-
     sorted_idx = []
 
     if agg_col is not None:
         if agg_mechanism == "mean":
-            pgs_weights_df = pgs_weights_df.groupby(agg_col).mean()
-            print(pgs_weights_df)
+            pgs_weights_df = pgs_weights_df.groupby(agg_col)[prs_cols].mean()
             if agg_order is None:
                 pgs_weights_df = sort_pgs_weights_df(pgs_weights_df)
             else:
@@ -306,7 +361,6 @@ def plot_expert_weights(
             x_ticks = []
             x_tick_labels = []
             cum_group_size = 0
-            pgs_cols = [c for c in pgs_weights_df.columns if c != agg_col]
 
             if agg_order is not None:
                 group_order = agg_order
@@ -319,7 +373,11 @@ def plot_expert_weights(
                 cum_group_size += len(sub_df)
                 x_tick_labels.append(g)
 
-                sub_df = sort_pgs_weights_df(sub_df)
+                if sort_col is not None:
+                    sub_df = sub_df.sort_values(sort_col)
+                else:
+                    sub_df = sort_pgs_weights_df(sub_df)
+
                 sorted_idx.append(sub_df.index.values)
 
                 # Add a separator line:
@@ -328,13 +386,13 @@ def plot_expert_weights(
                 if g_idx < len(grouped_data.groups) - 1:
                     sep_row = pd.DataFrame(
                         np.repeat(
-                            np.concatenate([np.zeros(len(pgs_cols)), [1.0]]).reshape(
+                            np.concatenate([np.zeros(len(prs_cols)), [1.0]]).reshape(
                                 1, -1
                             ),
                             sep_size,
                             axis=0,
                         ),
-                        columns=pgs_cols + ["_sep"],
+                        columns=prs_cols + ["_sep"],
                     )
                     final_df.append(pd.concat([sub_df, sep_row]))
                     cum_group_size += sep_size
@@ -346,10 +404,17 @@ def plot_expert_weights(
             add_color = ["#000000"]
 
     else:
-        pgs_weights_df = sort_pgs_weights_df(pgs_weights_df)
+        if sort_col is not None:
+            pgs_weights_df = pgs_weights_df.sort_values(sort_col)
+        else:
+            pgs_weights_df = sort_pgs_weights_df(pgs_weights_df)
+
         sorted_idx = pgs_weights_df.index.values
 
-    model_names = sorted([c for c in pgs_weights_df.columns if c != "_sep"])
+    if sort_col in pgs_weights_df.columns:
+        pgs_weights_df = pgs_weights_df.drop(sort_col, axis=1)
+
+    model_names = sorted(prs_cols)
     colors = assign_models_consistent_colors(model_names, palette)
 
     if len(add_color) > 0:
@@ -385,6 +450,28 @@ def plot_expert_weights(
         plt.legend().remove()
     else:
         plt.legend(loc="center left", bbox_to_anchor=(1, 0.5), title="Stratified PRS")
+
+    # ---------------------------------------------
+    # If a sort column is specified, add it as an annotation to the plot:
+    if sort_col is not None:
+        ax.annotate(
+            sort_col,
+            xy=(0.15, 1.05),
+            xytext=(0.01, 1.05),
+            xycoords="axes fraction",
+            textcoords="axes fraction",
+            arrowprops=dict(
+                arrowstyle="-|>",
+                lw=2,
+                mutation_scale=20,
+                fc="black",
+                ec="black",
+            ),
+            ha="left",
+            va="center",
+            annotation_clip=False,
+        )
+    # ---------------------------------------------
 
     plt.tight_layout()
 

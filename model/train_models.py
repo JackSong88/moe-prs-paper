@@ -1,18 +1,29 @@
+import argparse
 import copy
+import json
 import os.path as osp
+import pickle
 import sys
+from functools import partial
+
+import pandas as pd
+import torch
+from magenpy.utils.system_utils import makedir
 
 sys.path.append(osp.dirname(osp.dirname(__file__)))
 sys.path.append(osp.dirname(osp.dirname(osp.dirname(__file__))))
-import argparse
-import json
 
 from baseline_models import AncestryWeightedPRS, MultiPRS
-from magenpy.utils.system_utils import makedir
+from grid_search import custom_cv_grid_search, get_gate_penalty_ladder
 from moe import MoEPRS
 from moe_pytorch import Lit_MoEPRS, make_deterministic, train_model
 from PRSDataset import PRSDataset
 from utils import Timer
+
+df = pd.read_csv(
+    osp.join(osp.dirname(osp.dirname(__file__)), "tables/phenotype_prs_table.csv")
+)
+MODEL_NAME_MAP = dict(zip(df["PGS"], df["Training_cohort"]))
 
 
 def train_baseline_linear_models(
@@ -42,19 +53,40 @@ def train_baseline_linear_models(
 
     runtimes["MultiPRS"] = timer.minutes
 
-    base_models["Covariates"] = MultiPRS(
-        prs_dataset=dataset,
-        covariates_cols=dataset.covariates_cols,
-        add_intercept=add_intercept,
-        class_weights=class_weights,
-        penalty_type=penalty_type,
-        penalty=penalty,
-    )
-    with Timer() as timer:
-        base_models["Covariates"].fit()
+    # -------------------------------------------------
+    # Determine if we should run the AncestryWeightedPRS model:
 
-    runtimes["Covariates"] = timer.minutes
+    # First, map the model names to their corresponding training cohort:
+    model_names = {m: MODEL_NAME_MAP[m] for m in dataset.prs_cols}
 
+    # If we have at least two models whose names overlaps with
+    # ancestry labels in the dataset, then run the AncestryWeightedPRS model:
+    if (
+        len(
+            set(model_names.values()).intersection(
+                set(dataset.data["Ancestry"]).unique()
+            )
+        )
+        >= 2
+    ):
+        base_models["AncestryWeightedPRS"] = AncestryWeightedPRS(
+            prs_dataset=dataset,
+            expert_cols=dataset.prs_cols,
+            covariates_cols=dataset.covariates_cols,
+            add_intercept=add_intercept,
+            class_weights=class_weights,
+            penalty_type=penalty_type,
+            penalty=penalty,
+            expert_ancestry_map=model_names,
+        )
+
+        with Timer() as timer:
+            base_models["AncestryWeightedPRS"].fit()
+
+        runtimes["AncestryWeightedPRS"] = timer.minutes
+
+    # -------------------------------------------------
+    # First the base models with covariates:
     for i, pgs_id in enumerate(dataset.prs_cols):
         base_models[f"{pgs_id}-covariates"] = MultiPRS(
             prs_dataset=dataset,
@@ -74,14 +106,7 @@ def train_baseline_linear_models(
     return base_models, runtimes
 
 
-def train_moe_model_numpy(
-    dataset,
-    gate_penalty=0.0,
-    expert_penalty=0.0,
-    gate_add_intercept=True,
-    expert_add_intercept=True,
-    optimizer="L-BFGS-B",
-):
+def train_moe_model_numpy(dataset):
     print(
         f"> Training MoE model for {dataset.phenotype_col} with {dataset.N} samples..."
     )
@@ -91,64 +116,59 @@ def train_moe_model_numpy(
     moe_models = dict()
     runtimes = dict()
 
+    # -----------------------------------------
+    # Fit the standard MoEPRS model:
     moe = MoEPRS(
         prs_dataset=dataset,
         expert_cols=dataset.prs_cols,
         gate_input_cols=dataset.covariates_cols,
         global_covariates_cols=dataset.covariates_cols,
-        optimizer=optimizer,
-        fix_residuals=False,
-        gate_add_intercept=gate_add_intercept,
-        expert_add_intercept=expert_add_intercept,
-        gate_penalty=gate_penalty,
-        expert_penalty=expert_penalty,
-        n_jobs=min(4, dataset.n_prs_models),
     )
 
     with Timer() as timer:
         moe.fit()
 
+    moe_models["MoE"] = moe
     runtimes["MoE"] = timer.minutes
 
-    moe_global_int = MoEPRS(
-        prs_dataset=dataset,
-        expert_cols=dataset.prs_cols,
-        gate_input_cols=dataset.covariates_cols,
-        global_covariates_cols=dataset.covariates_cols,
-        optimizer=optimizer,
-        fix_residuals=False,
-        gate_add_intercept=gate_add_intercept,
-        expert_add_intercept=False,
-        gate_penalty=gate_penalty,
-        expert_penalty=expert_penalty,
-        n_jobs=min(4, dataset.n_prs_models),
-    )
-
-    with Timer() as timer:
-        moe_global_int.fit()
-
-    runtimes["MoE-global-int"] = timer.minutes
-
+    # -----------------------------------------
+    # Fit MoEPRS model covariate-free gating (e.g. MultiPRS)
     moe_cfg = MoEPRS(
         prs_dataset=dataset,
         expert_cols=dataset.prs_cols,
         gate_input_cols=None,
         global_covariates_cols=dataset.covariates_cols,
-        optimizer=optimizer,
-        fix_residuals=False,
-        gate_add_intercept=gate_add_intercept,
-        expert_add_intercept=False,  ## Check this?
-        gate_penalty=gate_penalty,
-        expert_penalty=expert_penalty,
-        n_jobs=min(4, dataset.n_prs_models),
     )
 
     with Timer() as timer:
         moe_cfg.fit()
 
+    moe_models["MoE-CFG"] = moe_cfg
     runtimes["MoE-CFG"] = timer.minutes
 
-    moe_models = {"MoE-CFG": moe_cfg, "MoE": moe, "MoE-global-int": moe_global_int}
+    # -----------------------------------------
+    # Fit the MoEPRS model using grid search:
+
+    partial_moe = partial(
+        MoEPRS,
+        expert_cols=dataset.prs_cols,
+        gate_input_cols=dataset.covariates_cols,
+        global_covariates_cols=dataset.covariates_cols,
+    )
+
+    with Timer() as timer:
+        moe_models["MoE-GS"] = custom_cv_grid_search(
+            dataset,
+            partial_moe,
+            {"gate_penalty": get_gate_penalty_ladder()},
+            n_jobs=4,
+            validation_fit_params={"verbose": False, "n_iter": 100},
+        )
+
+    runtimes["MoE-GS"] = timer.minutes
+
+    # -----------------------------------------
+    # Run MoEPRS with fixed residuals:
 
     if dataset.phenotype_likelihood != "binomial":
         moe_fix_resid = MoEPRS(
@@ -156,40 +176,14 @@ def train_moe_model_numpy(
             expert_cols=dataset.prs_cols,
             gate_input_cols=dataset.covariates_cols,
             global_covariates_cols=dataset.covariates_cols,
-            optimizer=optimizer,
             fix_residuals=True,
-            gate_add_intercept=gate_add_intercept,
-            expert_add_intercept=expert_add_intercept,
-            gate_penalty=gate_penalty,
-            expert_penalty=expert_penalty,
-            n_jobs=min(4, dataset.n_prs_models),
         )
 
         with Timer() as timer:
             moe_fix_resid.fit()
 
         runtimes["MoE-fixed-resid"] = timer.minutes
-
-        moe_fix_resid_global_int = MoEPRS(
-            prs_dataset=dataset,
-            expert_cols=dataset.prs_cols,
-            gate_input_cols=dataset.covariates_cols,
-            global_covariates_cols=dataset.covariates_cols,
-            optimizer=optimizer,
-            fix_residuals=True,
-            gate_add_intercept=gate_add_intercept,
-            expert_add_intercept=False,
-            gate_penalty=gate_penalty,
-            expert_penalty=expert_penalty,
-        )
-
-        with Timer() as timer:
-            moe_fix_resid_global_int.fit()
-
-        runtimes["MoE-fixed-resid-global-int"] = timer.minutes
-
         moe_models["MoE-fixed-resid"] = moe_fix_resid
-        moe_models["MoE-fixed-resid-global-int"] = moe_fix_resid_global_int
 
     return moe_models, runtimes
 
@@ -292,7 +286,6 @@ def train_moe_models_torch(
 def train_all_models(
     dataset,
     baseline_kwargs,
-    moe_kwargs,
     skip_baseline=False,
     skip_moe=False,
     moe_pytorch_kwargs=None,
@@ -310,7 +303,7 @@ def train_all_models(
             runtimes.update(br)
 
         if not skip_moe:
-            mm, mr = train_moe_model_numpy(dataset, **moe_kwargs)
+            mm, mr = train_moe_model_numpy(dataset)
             trained_models.update(mm)
             runtimes.update(mr)
 
@@ -370,13 +363,6 @@ if __name__ == "__main__":
         type=str,
         default="",
         help="A comma-separated list of key-value pairs with the arguments for the baseline models.",
-    )
-    parser.add_argument(
-        "--moe-kwargs",
-        dest="moe_kwargs",
-        type=str,
-        default="",
-        help="A comma-separated list of key-value pairs with the arguments for the MoE model.",
     )
     parser.add_argument(
         "--moe-pytorch-kwargs",
@@ -496,11 +482,6 @@ if __name__ == "__main__":
     output_dir = osp.join(output_dir, dataset_name)
 
     makedir(output_dir)
-
-    import json
-    import pickle
-
-    import torch
 
     print("> Saving trained models to:\n\t", output_dir)
 

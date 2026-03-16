@@ -9,10 +9,7 @@ import seaborn as sns
 from magenpy.utils.system_utils import makedir
 from viprs.eval.continuous_metrics import (
     incremental_r2,
-    mse,
-    partial_correlation,
     pearson_r,
-    r2,
 )
 
 parent_dir = osp.dirname(osp.dirname(osp.abspath(__file__)))
@@ -257,7 +254,10 @@ def plot_mixing_weight_comparison(biobank="ukbb"):
 
 
 def extract_accuracy_data(
-    test_biobank="ukbb", metric="Incremental_R2", dataset="test_data"
+    test_biobank="ukbb",
+    metric="Incremental_R2",
+    dataset="test_data",
+    evaluation_category="Ancestry",
 ):
     # Extract accuracy metrics:
     f = f"data/evaluation/HEIGHT/{test_biobank}/{dataset}.csv"
@@ -296,7 +296,7 @@ def extract_accuracy_data(
     dfs = postprocess_metrics_df(
         df,
         metric,
-        category="Ancestry",
+        category=evaluation_category,
         min_sample_size=50,
         aggregate_single_prs=True,
         include_cohort_matched=True,
@@ -376,6 +376,8 @@ def plot_performance_on_ancestry_group(biobank="ukbb", ancestry="AMR"):
     plt.close()
 
 
+# -----------------------------------------------------------------------------------------
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Plot Figure 2 of manuscript")
 
@@ -421,7 +423,43 @@ if __name__ == "__main__":
             "Best Single Source PRS": "#BC80BD",
             "Ancestry-matched PRS": "#66C2A5",
         },
+        test_models=("MoEPRS (UKB)", "MultiPRS (UKB)"),
     )
+
+    # ---------------- Plot accuracy subpanels ----------------
+
+    ukb_data = extract_accuracy_data("ukbb", evaluation_category="Coarse Ancestry")
+    cag_data = extract_accuracy_data("cartagene", evaluation_category="Coarse Ancestry")
+
+    all_data = pd.concat([ukb_data, cag_data], axis=0).reset_index(drop=True)
+
+    g = plot_combined_accuracy_metrics(
+        all_data,
+        output_f="figures/section_2/accuracy_subpanels_coarse_ancestry.eps",
+        col_order=["Standing Height (UKB)", "Standing Height (CaG)"],
+        hue_order=[
+            "MoEPRS (UKB)",
+            "MoEPRS (CaG)",
+            "MultiPRS (UKB)",
+            "MultiPRS (CaG)",
+            "Best Single Source PRS",
+            "Ancestry-matched PRS",
+        ],
+        height=4.5,
+        aspect=1.25,
+        palette={
+            "MoEPRS (UKB)": "#375E97",
+            "MoEPRS (CaG)": "#8CA8D8",
+            "MultiPRS (UKB)": "#FFBB00",
+            "MultiPRS (CaG)": "#FFE066",
+            "Best Single Source PRS": "#BC80BD",
+            "Ancestry-matched PRS": "#66C2A5",
+        },
+        test_models=("MoEPRS (UKB)", "MultiPRS (UKB)"),
+    )
+
+    # ----------------------------------------------------------------
+    # Evaluate on training data (sanity check):
 
     ukb_data = extract_accuracy_data("ukbb", dataset="train_data")
     cag_data = extract_accuracy_data("cartagene", dataset="train_data")
@@ -450,10 +488,11 @@ if __name__ == "__main__":
             "Best Single Source PRS": "#BC80BD",
             "Ancestry-matched PRS": "#66C2A5",
         },
+        test_models=("MoEPRS (UKB)", "MultiPRS (UKB)"),
     )
 
     # ---------------- Plot accuracy subpanels ----------------
-
+    # Plot Pearson correlation metrics
     ukb_data = extract_accuracy_data("ukbb", metric="CORR")
     cag_data = extract_accuracy_data("cartagene", metric="CORR")
 
@@ -555,15 +594,10 @@ if __name__ == "__main__":
     # Plot the fine-grained admixture graphs for the MoE model:
 
     # First case: OTH ancestry group in UKB:
-    data_path = "data/harmonized_data/HEIGHT/ukbb/test_data.pkl"
+    data_path = "data/harmonized_data/HEIGHT/ukbb/full_data.pkl"
     model_path = f"data/trained_models/HEIGHT/ukbb/train_data/{args.moe_model}.pkl"
 
     p_dataset = PRSDataset.from_pickle(data_path)
-    # Filter the samples to only include those with OTH ancestry:
-    p_dataset.filter_samples(p_dataset.data["Ancestry"] == "OTH")
-    p_dataset.data["Fine-scale genetic cluster (UMAP+HDBSCAN)"] = p_dataset.data[
-        "UMAP_Cluster"
-    ]
 
     umap_cluster_map = {
         "14 ENG-EAS-MIX": "Mixed EAS",
@@ -574,9 +608,20 @@ if __name__ == "__main__":
         "5 LEV": "Levant",
     }
 
+    # Filter the samples to only include those with OTH ancestry AND those that
+    # belong to the assigned clusters above:
+    p_dataset.filter_samples(
+        (p_dataset.data["Ancestry"] == "OTH")
+        & (p_dataset.data["UMAP_Cluster"].isin(list(umap_cluster_map.keys())))
+    )
+
+    p_dataset.data["Fine-scale genetic cluster (UMAP+HDBSCAN)"] = p_dataset.data[
+        "UMAP_Cluster"
+    ]
+
     p_dataset.data["Fine-scale genetic cluster (UMAP+HDBSCAN)"] = p_dataset.data[
         "Fine-scale genetic cluster (UMAP+HDBSCAN)"
-    ].map(lambda x: umap_cluster_map.get(x, x))
+    ].map(umap_cluster_map)
 
     moe_model = MoEPRS.from_saved_model(model_path)
 
@@ -604,6 +649,7 @@ if __name__ == "__main__":
         tick_rotation=0,
     )
 
+    # ---------------------------------------------------
     # Second case: MID ancestry group in cartagene:
     data_path = "data/harmonized_data/HEIGHT/cartagene/test_data.pkl"
     model_path = f"data/trained_models/HEIGHT/cartagene/train_data/{args.moe_model}.pkl"
@@ -633,22 +679,26 @@ if __name__ == "__main__":
     )
 
     # Third case: MID ancestry group in UKB:
-    data_path = "data/harmonized_data/HEIGHT/ukbb/test_data.pkl"
+    data_path = "data/harmonized_data/HEIGHT/ukbb/full_data.pkl"
     model_path = f"data/trained_models/HEIGHT/ukbb/train_data/{args.moe_model}.pkl"
 
     p_dataset = PRSDataset.from_pickle(data_path)
+
+    umap_mid_clusters = {
+        "18 AFR": "Africa",
+        "23 HAFR": "Horn of Africa",
+        "5 LEV": "Levant",
+        "6 NAF": "North Africa",
+    }
+
     # Filter the samples to only include those with MID ancestry:
-    p_dataset.filter_samples(p_dataset.data["Ancestry"] == "MID")
+    p_dataset.filter_samples(
+        (p_dataset.data["Ancestry"] == "MID")
+        & (p_dataset.data["UMAP_Cluster"].isin(list(umap_mid_clusters.keys())))
+    )
     p_dataset.data["Fine-scale genetic cluster (UMAP+HDBSCAN)"] = p_dataset.data[
         "UMAP_Cluster"
-    ].map(
-        lambda x: {
-            "18 AFR": "Africa",
-            "23 HAFR": "Horn of Africa",
-            "5 LEV": "Levant",
-            "6 NAF": "North Africa",
-        }.get(x, x)
-    )
+    ].map(umap_mid_clusters)
     moe_model = MoEPRS.from_saved_model(model_path)
 
     sns.set_context("paper", font_scale=1.25)

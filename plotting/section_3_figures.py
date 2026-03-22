@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from magenpy.utils.system_utils import makedir
+from matplotlib.lines import Line2D
 from scipy.stats import pearsonr
 from viprs.eval.eval_utils import fit_linear_model
 
@@ -17,8 +18,8 @@ sys.path.append(osp.join(parent_dir, "model/"))
 sys.path.append(osp.join(parent_dir, "evaluation/"))
 
 from baseline_models import MultiPRS
-from combined_accuracy_plots import add_error_bars, plot_combined_accuracy_metrics
-from matplotlib.lines import Line2D
+from combined_accuracy_plots import plot_combined_accuracy_metrics
+from error_bars import add_error_bars
 from moe import MoEPRS
 from plot_pgs_admixture import plot_admixture_graphs
 from plot_predictive_performance import postprocess_metrics_df
@@ -488,7 +489,7 @@ def extract_weights_data(biobank="ukbb"):
             continue
 
         w_df = pd.DataFrame(
-            np.array(["Female", "Male"])[dataset.get_data_columns("Sex")],
+            np.array(["Female", "Male"])[dataset.get_data_columns("Sex").astype(int)],
             columns=["Sex"],
         )
         extract_cols = ["Age", "Ancestry"] + ["PC" + str(i) for i in range(1, 11)]
@@ -505,7 +506,10 @@ def extract_weights_data(biobank="ukbb"):
 
 
 def extract_accuracy_data(
-    test_biobank="ukbb", metric="Incremental_R2", dataset="test_data"
+    test_biobank="ukbb",
+    metric="Incremental_R2",
+    dataset="test_data",
+    evaluation_category="Ancestry",
 ):
     dfs = []
 
@@ -543,16 +547,16 @@ def extract_accuracy_data(
             f"{args.moe_model} (cartagene)", "MoEPRS (CaG)", regex=False
         )
         df["Model Name"] = df["Model Name"].str.replace(
-            f"MultiPRS (ukbb)", "MultiPRS (UKB)", regex=False
+            "MultiPRS (ukbb)", "MultiPRS (UKB)", regex=False
         )
         df["Model Name"] = df["Model Name"].str.replace(
-            f"MultiPRS (cartagene)", "MultiPRS (CaG)", regex=False
+            "MultiPRS (cartagene)", "MultiPRS (CaG)", regex=False
         )
 
         df = postprocess_metrics_df(
             df,
             metric=metric,
-            category="Ancestry",
+            category=evaluation_category,
             min_sample_size=50,
             aggregate_single_prs=True,
             include_cohort_matched=True,
@@ -706,10 +710,10 @@ def plot_hdl_variance_and_performance_characteristics(biobank="ukbb"):
     plt.savefig(f"figures/section_3/hdl_variance_performance_{biobank}.eps")
 
 
-def plot_ldl_medication_use_subpanel():
+def plot_ldl_medication_use_subpanel(biobank="ukbb"):
     ldl_metrics_eur = extract_stratified_evaluation_metrics(
         pheno="LDL",
-        biobank="ukbb",
+        biobank=biobank,
         keep_ancestry=["EUR"],
         category=["SexG", "AgeGroup3"],
     )
@@ -725,7 +729,10 @@ def plot_ldl_medication_use_subpanel():
     )
     ldl_metrics_eur = ldl_metrics_eur.sort_values("EvalGroup")
 
-    chol_med_prev = pd.read_csv("data/misc/cholesterol_medication_prevalence.csv")
+    med_prev = pd.read_csv(f"data/misc/medication_prevalence_{biobank}.csv")
+    chol_med_prev = med_prev.loc[
+        med_prev["Medication"] == "Cholesterol lowering medication"
+    ].copy()
     chol_med_prev["Group"] = pd.Categorical(
         chol_med_prev["Group"], categories=ordered_cats, ordered=True
     )
@@ -776,12 +783,12 @@ def plot_ldl_medication_use_subpanel():
     plt.title(
         "Prediction accuracy on LDL Cholesterol and\n"
         "prevalence of cholesterol-lowering medication\n"
-        "in samples of European ancestry (UKB)"
+        f"in samples of European ancestry ({BIOBANK_NAME_MAP_SHORT[biobank]})"
     )
 
     plt.tight_layout()
 
-    plt.savefig("figures/section_3/ldl_accuracy_medication_use_ukbb.eps")
+    plt.savefig(f"figures/section_3/ldl_accuracy_medication_use_{biobank}.eps")
     plt.close()
 
 
@@ -806,6 +813,7 @@ if __name__ == "__main__":
         "LDL_adj": "LDL Cholesterol (adj.)",
         "HDL": "HDL Cholesterol",
         "LOG_TG": "log(Triglycerides)",
+        "TC": "Total Cholesterol",
     }
 
     # ---------------- Plot accuracy subpanels ----------------
@@ -818,6 +826,7 @@ if __name__ == "__main__":
             "LDL Cholesterol (UKB)",
             "HDL Cholesterol (UKB)",
             "log(Triglycerides) (UKB)",
+            "Total Cholesterol (UKB)",
         ],
         hue_order=[
             "MoEPRS (UKB)",
@@ -827,7 +836,7 @@ if __name__ == "__main__":
             "Best Single Source PRS",
             "Ancestry-matched PRS",
         ],
-        col_wrap=3,
+        col_wrap=4,
         height=4,
         aspect=1.15,
         palette={
@@ -838,8 +847,10 @@ if __name__ == "__main__":
             "Best Single Source PRS": "#BC80BD",
             "Ancestry-matched PRS": "#66C2A5",
         },
+        test_models=("MoEPRS (UKB)", "MultiPRS (UKB)"),
     )
 
+    # ----------------
     # Plot performance for LDL/LDL_adj only:
     plot_combined_accuracy_metrics(
         ukb_data,
@@ -862,8 +873,45 @@ if __name__ == "__main__":
             "Best Single Source PRS": "#BC80BD",
             "Ancestry-matched PRS": "#66C2A5",
         },
+        test_models=("MoEPRS (UKB)", "MultiPRS (UKB)"),
     )
 
+    # ----------------
+    # Plot the same results, but using coarse ancestry labels:
+    ukb_data = extract_accuracy_data("ukbb", evaluation_category="Coarse Ancestry")
+
+    g = plot_combined_accuracy_metrics(
+        ukb_data,
+        output_f="figures/section_3/accuracy_subpanels_ukbb_coarse_ancestry.eps",
+        col_order=[
+            "LDL Cholesterol (UKB)",
+            "HDL Cholesterol (UKB)",
+            "log(Triglycerides) (UKB)",
+            "Total Cholesterol (UKB)",
+        ],
+        hue_order=[
+            "MoEPRS (UKB)",
+            "MoEPRS (CaG)",
+            "MultiPRS (UKB)",
+            "MultiPRS (CaG)",
+            "Best Single Source PRS",
+            "Ancestry-matched PRS",
+        ],
+        col_wrap=4,
+        height=4,
+        aspect=1.15,
+        palette={
+            "MoEPRS (UKB)": "#375E97",
+            "MoEPRS (CaG)": "#8CA8D8",
+            "MultiPRS (UKB)": "#FFBB00",
+            "MultiPRS (CaG)": "#FFE066",
+            "Best Single Source PRS": "#BC80BD",
+            "Ancestry-matched PRS": "#66C2A5",
+        },
+        test_models=("MoEPRS (UKB)", "MultiPRS (UKB)"),
+    )
+
+    # ----------------------------------------------------------------
     # Plot cartagene data:
 
     cag_data = extract_accuracy_data("cartagene")
@@ -875,6 +923,7 @@ if __name__ == "__main__":
             "LDL Cholesterol (CaG)",
             "HDL Cholesterol (CaG)",
             "log(Triglycerides) (CaG)",
+            "Total Cholesterol (CaG)",
         ],
         hue_order=[
             "MoEPRS (UKB)",
@@ -884,7 +933,7 @@ if __name__ == "__main__":
             "Best Single Source PRS",
             "Ancestry-matched PRS",
         ],
-        col_wrap=3,
+        col_wrap=4,
         height=4,
         aspect=1.15,
         palette={
@@ -895,6 +944,42 @@ if __name__ == "__main__":
             "Best Single Source PRS": "#BC80BD",
             "Ancestry-matched PRS": "#66C2A5",
         },
+        test_models=("MoEPRS (UKB)", "MultiPRS (UKB)"),
+    )
+
+    # ----------------
+    # Plot the same data using coarse ancestry labels:
+    cag_data = extract_accuracy_data("cartagene", evaluation_category="Coarse Ancestry")
+
+    g = plot_combined_accuracy_metrics(
+        cag_data,
+        output_f="figures/section_3/accuracy_subpanels_cag_coarse_ancestry.eps",
+        col_order=[
+            "LDL Cholesterol (CaG)",
+            "HDL Cholesterol (CaG)",
+            "log(Triglycerides) (CaG)",
+            "Total Cholesterol (CaG)",
+        ],
+        hue_order=[
+            "MoEPRS (UKB)",
+            "MoEPRS (CaG)",
+            "MultiPRS (UKB)",
+            "MultiPRS (CaG)",
+            "Best Single Source PRS",
+            "Ancestry-matched PRS",
+        ],
+        col_wrap=4,
+        height=4,
+        aspect=1.15,
+        palette={
+            "MoEPRS (UKB)": "#375E97",
+            "MoEPRS (CaG)": "#8CA8D8",
+            "MultiPRS (UKB)": "#FFBB00",
+            "MultiPRS (CaG)": "#FFE066",
+            "Best Single Source PRS": "#BC80BD",
+            "Ancestry-matched PRS": "#66C2A5",
+        },
+        test_models=("MoEPRS (UKB)", "MultiPRS (UKB)"),
     )
 
     # ---------------- Plot PRS Mixture graphs for the phenotypes ----------------
@@ -941,6 +1026,7 @@ if __name__ == "__main__":
             "LDL Cholesterol (UKB)",
             "HDL Cholesterol (UKB)",
             "log(Triglycerides) (UKB)",
+            "Total Cholesterol (UKB)",
         ],
         hue_order=[
             "MoEPRS (UKB)",
@@ -950,7 +1036,7 @@ if __name__ == "__main__":
             "Best Single Source PRS",
             "Ancestry-matched PRS",
         ],
-        col_wrap=3,
+        col_wrap=4,
         height=4,
         aspect=1.15,
         palette={
@@ -961,6 +1047,7 @@ if __name__ == "__main__":
             "Best Single Source PRS": "#BC80BD",
             "Ancestry-matched PRS": "#66C2A5",
         },
+        test_models=("MoEPRS (UKB)", "MultiPRS (UKB)"),
     )
 
     cag_data = extract_accuracy_data("cartagene")
@@ -972,6 +1059,7 @@ if __name__ == "__main__":
             "LDL Cholesterol (CaG)",
             "HDL Cholesterol (CaG)",
             "log(Triglycerides) (CaG)",
+            "Total Cholesterol (CaG)",
         ],
         hue_order=[
             "MoEPRS (UKB)",
@@ -981,7 +1069,7 @@ if __name__ == "__main__":
             "Best Single Source PRS",
             "Ancestry-matched PRS",
         ],
-        col_wrap=3,
+        col_wrap=4,
         height=4,
         aspect=1.15,
         palette={
@@ -992,6 +1080,7 @@ if __name__ == "__main__":
             "Best Single Source PRS": "#BC80BD",
             "Ancestry-matched PRS": "#66C2A5",
         },
+        test_models=("MoEPRS (UKB)", "MultiPRS (UKB)"),
     )
 
     for pheno in phenotypes:
@@ -1032,13 +1121,11 @@ if __name__ == "__main__":
     cag_weights = extract_weights_data(biobank="cartagene")
     generate_weight_figures(cag_weights, biobank="cartagene")
 
-    sns.set_context("paper", font_scale=1.25)
-
     generate_metrics_figures(biobank="ukbb")
     generate_metrics_figures(biobank="cartagene")
 
-    plot_ldl_medication_use_subpanel()
+    plot_ldl_medication_use_subpanel(biobank="ukbb")
+    plot_ldl_medication_use_subpanel(biobank="cartagene")
 
-    sns.set_context("paper", font_scale=1.25)
     plot_hdl_variance_and_performance_characteristics(biobank="ukbb")
     plot_hdl_variance_and_performance_characteristics(biobank="cartagene")

@@ -1,5 +1,6 @@
 import argparse
 import glob
+import os.path as osp
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -215,9 +216,13 @@ if __name__ == "__main__":
 
         df = transform_eval_metrics(read_eval_metrics(f))
 
+        keep_models_moe = [f"{args.moe_model} ({args.biobank})"]
+        if not args.restrict_to_same_biobank:
+            other_biobank = ["cartagene", "ukbb"][args.biobank == "cartagene"]
+            keep_models_moe.append(f"{args.moe_model} ({other_biobank})")
+
         df = df.loc[
-            (df["Model Category"] != "MoE")
-            | df["Model Name"].isin([f"{args.moe_model} ({args.biobank})"])
+            (df["Model Category"] != "MoE") | df["Model Name"].isin(keep_models_moe)
         ]
 
         if args.restrict_to_same_biobank:
@@ -238,7 +243,12 @@ if __name__ == "__main__":
             else:
                 metrics_dfs[metric_cat].append(eval_df)
 
-    makedir(f"figures/accuracy/{args.biobank}/{args.dataset}/")
+    output_dir = f"figures/accuracy/{args.biobank}/{args.dataset}/"
+    output_dir = osp.join(
+        output_dir, ["", "same_biobank"][args.restrict_to_same_biobank]
+    )
+
+    makedir(output_dir)
 
     for pheno_eval_cat, dfs in metrics_dfs.items():
         if len(dfs) < 1:
@@ -250,12 +260,15 @@ if __name__ == "__main__":
 
         plot_combined_accuracy_metrics(
             pd.concat(dfs, axis=0).reset_index(drop=True),
-            f"figures/accuracy/{args.biobank}/{args.dataset}/combined_metrics_{args.moe_model}_{pheno_eval_cat}.eps",
+            osp.join(
+                output_dir, f"combined_metrics_{args.moe_model}_{pheno_eval_cat}.eps"
+            ),
             metric=metric[pheno_cat],
             col_order=phenotype_cats[pheno_cat],
             col_wrap=min(5, len(phenotype_cats[pheno_cat])),
             test_models=[
-                (f"{args.moe_model} ({args.biobank})", f"MultiPRS ({args.biobank})")
+                (f"{args.moe_model} ({args.biobank})", f"MultiPRS ({args.biobank})"),
+                (f"{args.moe_model} ({args.biobank})", "Best Single Source PRS"),
             ],
-            significance_symbols=("*",),  # "◆"),
+            significance_symbols=("*", "+"),  # "◆"),
         )

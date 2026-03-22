@@ -60,4 +60,4 @@ for med_cat in ("chol_med", "bp_med"):
         }[med_cat]
 
 group_df = pd.concat(res, ignore_index=True)
-group_df.to_csv("data/misc/medication_prevalence_ukb.csv", index=False)
+group_df.to_csv("data/misc/medication_prevalence_ukbb.csv", index=False)

@@ -61,15 +61,18 @@ def average_precision_at_top_percentile(y_true, y_pred, percentile=0.05):
 
     return ap
 
-def stratified_evaluation(prs_dataset,
-                          trained_models=None,
-                          cat_group_cols=None,
-                          cont_group_cols=None,
-                          cont_group_bins=None,
-                          include_coarse_ancestry=False,
-                          pc_clusters=None,
-                          min_group_size=30):
-
+def stratified_evaluation(
+    prs_dataset,
+    trained_models=None,
+    cat_group_cols=None,
+    cont_group_cols=None,
+    cont_group_bins=None,
+    include_coarse_ancestry=False,
+    pc_clusters=None,
+    metrics=None,
+    evaluate_base_models=True,
+    min_group_size=30,
+):
     if cont_group_cols is not None:
         assert cont_group_bins is not None, "Bins must be provided for continuous group columns!"
 
@@ -95,10 +98,15 @@ def stratified_evaluation(prs_dataset,
 
     # Evaluate the models across everyone:
 
-    edf = evaluate_prs_models(prs_dataset, other_models=preds)
-    edf['EvalCategory'] = 'All'
-    edf['EvalGroup'] = 'All'
-    edf['N'] = prs_dataset.N
+    edf = evaluate_prs_models(
+        prs_dataset,
+        other_models=preds,
+        metrics=metrics,
+        evaluate_base_models=evaluate_base_models,
+    )
+    edf["EvalCategory"] = "All"
+    edf["EvalGroup"] = "All"
+    edf["N"] = prs_dataset.N
 
     dfs.append(edf)
 
@@ -106,7 +114,14 @@ def stratified_evaluation(prs_dataset,
         print("> Evaluation group:", mg)
         for m, msk in msk_group.items():
             print("\t> Subgroup:", m)
-            edf = evaluate_prs_models(prs_dataset, other_models=preds, mask=msk, min_group_size=min_group_size)
+            edf = evaluate_prs_models(
+                prs_dataset,
+                other_models=preds,
+                mask=msk,
+                min_group_size=min_group_size,
+                metrics=metrics,
+                evaluate_base_models=evaluate_base_models,
+            )
 
             if edf is None:
                 continue
@@ -117,55 +132,94 @@ def stratified_evaluation(prs_dataset,
             if msk is None:
                 edf['N'] = prs_dataset.N
             else:
-                edf['N'] = sum(msk)
+                edf["N"] = np.sum(msk)
 
             dfs.append(edf)
 
     return pd.concat(dfs)
 
 
-def evaluate_prs_models(prs_dataset,
-                        other_models=None,
-                        mask=None,
-                        min_group_size=30):
-
+def evaluate_prs_models(
+    prs_dataset,
+    other_models=None,
+    mask=None,
+    metrics=None,
+    evaluate_base_models=True,
+    min_group_size=30,
+):
     prs_dataset.set_backend("numpy")
 
     if mask is None:
         mask = np.ones(prs_dataset.N).astype(bool)
 
     if mask.sum() < min_group_size:
-        print(f"Skipping evaluation due to insufficient sample size ({mask.sum()} < {min_group_size})")
-        return None
+        raise ValueError(
+            f"Skipping evaluation due to insufficient sample size ({mask.sum()} < {min_group_size})"
+        )
 
-    if prs_dataset.phenotype_likelihood == 'gaussian':
-        metrics = ('CORR', 'MSE', 'Incremental_R2', 'Matched_Incremental_R2', 'Partial_CORR', 'AVG_PREC_TOP5')
+    # --------------------------------------------------------------------------
+    # Extract and preprocess which metrics to compute:
+    if metrics is None:
+        if prs_dataset.phenotype_likelihood == "gaussian":
+            metrics = ("CORR", "MSE", "Incremental_R2", "Partial_CORR", "AVG_PREC_TOP5")
+        else:
+            metrics = ("ROC_AUC", "PR_AUC", "Liability_R2", "Nagelkerke_R2")
     else:
-        metrics = ('ROC_AUC', 'PR_AUC', 'Liability_R2', 'Nagelkerke_R2')
+        if isinstance(metrics, str):
+            metrics = [metrics]
 
-    prs_df = pd.DataFrame(prs_dataset.get_prs_predictions()[mask, :],
-                          columns=prs_dataset.prs_ids)
+        # Check that the requested metric is valid:
+        for m in metrics:
+            assert m in (
+                "CORR",
+                "MSE",
+                "Incremental_R2",
+                "Partial_CORR",
+                "AVG_PREC_TOP5",
+                "ROC_AUC",
+                "PR_AUC",
+                "Liability_R2",
+                "Nagelkerke_R2",
+            )
 
-    phenotype = prs_dataset.get_phenotype().flatten()[mask]
+    # --------------------------------------------------------------------------
+    # Extract the polygenic scores to evaluate:
+    if evaluate_base_models:
+        prs_df = pd.DataFrame(
+            prs_dataset.get_prs_predictions()[mask, :], columns=prs_dataset.prs_ids
+        )
+    else:
+        prs_df = None
 
     if other_models is not None:
         prs_df = pd.concat([prs_df, other_models.loc[mask, :].reset_index(drop=True)], axis=1)
 
-    if any([m in metrics for m in ('Incremental_R2', 'Matched_Incremental_R2', 'Partial_CORR', 'Liability_R2', 'Nagelkerke_R2')]):
+    if prs_df is None:
+        raise ValueError("No models to evaluate!")
+
+    # --------------------------------------------------------------------------
+    # Extract the phenotype:
+
+    phenotype = prs_dataset.get_phenotype().flatten()[mask]
+
+    # --------------------------------------------------------------------------
+    # Extract the covariates (if the metric requires them):
+
+    if any(
+        [
+            m in metrics
+            for m in ("Incremental_R2", "Partial_CORR", "Liability_R2", "Nagelkerke_R2")
+        ]
+    ):
         covar = pd.DataFrame(prs_dataset.get_covariates()[mask, :])
+
+        # Remove invariant columns from the covariates:
+        # Mainly relevant when evaluating on age groups or sex...
+        covar = covar.loc[:, covar.var(axis=0) > 0]
     else:
         covar = None
 
-    # Remove columns with NaN values:
-    #na_cols = prs_df.isna().sum(axis=0) > 0
-    #if na_cols.any():
-    #    print("Removing the following columns due to NaN values:", prs_df.columns[na_cols])
-    #    prs_df.dropna(axis=1, inplace=True)
-
-    # Remove invariant columns from the covariates:
-    # Mainly relevant when evaluating on age groups or sex...
-    if covar is not None:
-        covar = covar.loc[:, covar.var(axis=0) > 0]
+    # --------------------------------------------------------------------------
 
     pgs_cols = [c for c in prs_df.columns if not c.endswith("__NULL")]
     metrics_df = pd.DataFrame({'PGS': pgs_cols})

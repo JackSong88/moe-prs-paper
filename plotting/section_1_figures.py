@@ -512,7 +512,7 @@ if __name__ == "__main__":
     }
 
     hue_order = ["MoEPRS", "MultiPRS", "Female PRS", "Male PRS"]
-    phenotype_order = ["Testosterone", "Creatinine", "Urate", "Waist-hip ratio"]
+    phenotype_order = ["Waist-hip ratio", "Testosterone", "Creatinine", "Urate"]
 
     ukbb_metrics_dfs = extract_accuracy_data()
 
@@ -530,6 +530,7 @@ if __name__ == "__main__":
         col_order=ukb_col_order,
         palette=palette,
         hue_order=hue_order,
+        test_models=("MoEPRS", "MultiPRS"),
     )
 
     plot_gate_mixing_weights_colored_by_sex(
@@ -564,6 +565,7 @@ if __name__ == "__main__":
         col_order=cag_col_order,
         palette=palette,
         hue_order=hue_order,
+        test_models=("MoEPRS", "MultiPRS"),
     )
 
     plot_gate_mixing_weights_colored_by_sex(

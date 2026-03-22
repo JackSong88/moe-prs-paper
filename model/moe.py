@@ -3,16 +3,9 @@ import pickle
 
 import numpy as np
 import pandas as pd
-from joblib import Parallel, delayed
 from scipy.linalg import lstsq
 from scipy.optimize import minimize
 from scipy.special import expit, huber, log_softmax, logsumexp, softmax
-from sklearn.linear_model import (
-    HuberRegressor,
-    LinearRegression,
-    LogisticRegression,
-    Ridge,
-)
 from tqdm.auto import tqdm
 
 
@@ -35,7 +28,7 @@ class ParameterTracker(object):
         self.curr_iter = 0
         self.best_iter = 0
 
-    def all_close(self, new_params, atol=1e-6, rtol=0.0):
+    def all_close(self, new_params, atol=1e-5, rtol=0.0):
         if isinstance(new_params, dict):
             return all(
                 [
@@ -80,7 +73,7 @@ class MoEPRS(object):
         expert_covariates_cols=None,
         global_covariates_cols=None,
         gate_add_intercept=True,
-        expert_add_intercept=True,
+        expert_add_intercept=False,
         standardize_data=True,
         gate_penalty=0.0,
         expert_penalty=0.0,
@@ -214,6 +207,7 @@ class MoEPRS(object):
 
         self.log_w = None  # Log of the expert weights
         self.log_resp = None  # Log of the expert responsibilities
+        self._resp = None  # The expert responsibilities
         self.log_resid = None  # The residual for each expert
 
         # Determine the type of the regression model:
@@ -237,10 +231,6 @@ class MoEPRS(object):
                 self.class_weights = np.array(class_weights)
         else:
             self.class_weights = None
-
-        # Initialize container to fit weighted linear models in the M Step:
-
-        self.wl_model = None
 
         # -------------------------------------------------------------------------
         # Initialize containers for keep track of objective / parameter values:
@@ -292,6 +282,7 @@ class MoEPRS(object):
                 "Weighted NLL": [],
                 "Gate Loss": [],
                 "Model Weights": [],
+                "model_params": [],
             }
 
         if param_0 is not None and "gate_params" in param_0:
@@ -302,6 +293,7 @@ class MoEPRS(object):
 
         self.log_w = self.predict_proba(log=True)
         self.log_resp = self.log_w.copy()
+        self._resp = np.exp(self.log_resp)
 
         if param_0 is not None and "expert_params" in param_0:
             assert param_0["expert_params"].shape == (self.K, self.expert_dim)
@@ -338,29 +330,6 @@ class MoEPRS(object):
                 self.log_resid = np.zeros(self.K)
             else:
                 self.update_residuals()
-
-            if self.expert_penalty > 0.0:
-                self.wl_model = Ridge(fit_intercept=False, alpha=self.expert_penalty)
-            else:
-                self.wl_model = LinearRegression(fit_intercept=False)
-        elif self.loss == "huber":
-            self.wl_model = HuberRegressor(
-                fit_intercept=False, alpha=self.expert_penalty
-            )
-        else:
-            if self.expert_penalty > 0.0:
-                self.wl_model = LogisticRegression(
-                    fit_intercept=False,
-                    class_weight=dict(zip([0.0, 1.0], self.class_weights)),
-                    C=1.0 / self.expert_penalty,
-                    penalty="l2",
-                )
-            else:
-                self.wl_model = LogisticRegression(
-                    fit_intercept=False,
-                    class_weight=dict(zip([0.0, 1.0], self.class_weights)),
-                    penalty=None,
-                )
 
     @property
     def n_params(self):
@@ -431,8 +400,7 @@ class MoEPRS(object):
 
     @property
     def expert_responsibility(self):
-        assert self.log_resp is not None
-        return np.exp(self.log_resp)
+        return self._resp
 
     def weighted_loss(self, axis=None):
         return (1.0 / self.N) * (np.exp(self.log_w) * self._expert_loss).sum(axis=axis)
@@ -556,9 +524,11 @@ class MoEPRS(object):
 
         if self.gate_penalty > 0.0:
             # Add penalty term for the gating model:
-            # Here, we scale the penalty by the sample size because we divide by N
-            # later on.
-            w_loss += self.gate_penalty * (self.gate_params**2).sum()
+            if self.gate_add_intercept:
+                g_params = self.gate_params[1:, :]
+            else:
+                g_params = self.gate_params
+            w_loss += self.gate_penalty * (g_params**2).sum()
 
         if self.expert_params is not None and self.expert_penalty > 0.0:
             # Add penalty term for the experts:
@@ -616,7 +586,8 @@ class MoEPRS(object):
         and \beta_{0}^{(i)} is the coefficient for the PRS itself. The remaining coefficients
         are for the covariates in the model (if present).
 
-        :param prs_dataset: An instance of `PRSDataset` with the data to use for scaling the predictions.
+        :param prs_dataset: An instance of `PRSDataset` with the data to
+        use for scaling the predictions.
         """
 
         assert self.expert_cols is not None
@@ -696,141 +667,7 @@ class MoEPRS(object):
         the log of the expert responsibilities.
         """
         self.log_resp = log_softmax(self.log_w + self.ll(), axis=-1)
-
-    def m_step_decoupled(self):
-        """
-        The maximization step of the EM algorithm.
-        Given the expert responsibilities computed in the E-Step, update the
-        gating model parameters and the expert parameters. For models with Gaussian likelihoods,
-        we also update the residuals of the model.
-        """
-
-        # (1) Update the parameters of the gating model:
-
-        # Compute expert responsibilities:
-        expert_resp = self.expert_responsibility
-
-        if self.optimizer == "lstsq":
-            H = np.clip(
-                self.log_resp[:, :-1] - self.log_resp[:, -1:], a_min=-20.0, a_max=20.0
-            )
-            self.gate_params = lstsq(
-                (1.0 / self.N)
-                * (
-                    self._sq_gate_input + self.gate_penalty * np.identity(self.gate_dim)
-                ),
-                (1.0 / self.N) * self.gate_input.T.dot(H),
-            )[0]
-
-        elif self.optimizer == "L-BFGS-B":
-            if self.batch_size is not None:
-                idx = np.random.choice(self.N, size=self.batch_size)
-                gate_input = self.gate_input[idx, :]
-                selected_expert_resp = expert_resp[idx, :]
-            else:
-                gate_input = self.gate_input
-                selected_expert_resp = expert_resp
-
-            def local_objective(gparams):
-                reshaped_gparams = gparams.reshape(self.gate_dim, self.K - 1)
-
-                log_g = log_softmax(
-                    _concat_zero(gate_input.dot(reshaped_gparams)), axis=-1
-                )
-
-                # Scale the loss by 1/sample_size for numerical stability?
-                loss = -(1.0 / self.N) * np.sum(selected_expert_resp * log_g)
-                grad = (1.0 / self.N) * gate_input.T.dot(
-                    np.exp(log_g[:, :-1]) - selected_expert_resp[:, :-1]
-                ).flatten()
-
-                if self.gate_penalty > 0:
-                    if self.gate_add_intercept:
-                        # Remove the intercept term from the penalty:
-                        reshaped_gparams[0, :] = 0.0
-
-                    loss += self.gate_penalty * (reshaped_gparams**2).sum()
-                    grad += 2.0 * self.gate_penalty * reshaped_gparams.flatten()
-
-                return loss, grad
-
-            res = minimize(
-                local_objective, self.gate_params.flatten(), jac=True, method="L-BFGS-B"
-            )
-            if not res.success:
-                print("Gate parameter optimization not successful:\n", res)
-
-            self.gate_params = res.x.reshape(self.gate_dim, self.K - 1)
-
-        # -------------------------------------------------------------------------
-        # (2) Update the parameters of the global covariates (if present):
-
-        for _ in range(50):
-            if self.global_covariates is not None:
-
-                def fit_gaussian_model(w, y, S, C):
-                    N, M = C.shape
-                    # Compute weighted mean of S per row
-                    S_bar = np.sum(w * S, axis=1)
-                    r = y - S_bar  # target residuals
-
-                    # Solve least squares
-                    model = copy.deepcopy(self.wl_model)
-                    model.fit_intercept = False
-                    model.fit(C, r)
-
-                    return model.coef_.flatten()
-
-                self.global_params = fit_gaussian_model(
-                    expert_resp,
-                    self.phenotype.flatten(),
-                    self.get_scaled_predictions(),
-                    self.global_covariates,
-                )
-
-            # -------------------------------------------------------------------------
-            # (3) Update the parameters of the experts:
-
-            if self.expert_params is not None:
-                if self.global_covariates is not None:
-                    target = self.phenotype.flatten() - self.global_covariates.dot(
-                        self.global_params
-                    )
-                else:
-                    target = self.phenotype.flatten()
-
-                def fit_model(i):
-                    model = copy.deepcopy(self.wl_model)
-                    if self.expert_covariates is not None:
-                        x = np.concatenate(
-                            [
-                                self.expert_covariates,
-                                self.expert_predictions[:, i, None],
-                            ],
-                            axis=1,
-                        )
-                    else:
-                        x = self.expert_predictions[:, i, None]
-
-                    model.fit(x, target, sample_weight=expert_resp[:, i])
-
-                    return model.coef_.flatten()
-
-                self.expert_params = np.array(
-                    Parallel(n_jobs=self.n_jobs)(
-                        delayed(fit_model)(i) for i in range(len(self.expert_params))
-                    )
-                )
-
-        # -------------------------------------------------------------------------
-
-        # (4) Given the updated parameters, re-compute the expert weights and losses:
-        self.log_w = self.predict_proba(log=True)
-        self.update_expert_losses()
-
-        # -------------------------------------------------------------------------
-        # (5) Update the residuals (for Gaussian likelihoods):
-        self.update_residuals()
+        self._resp = np.exp(self.log_resp)
 
     def m_step(self, use_jac=True):
         """
@@ -941,9 +778,9 @@ class MoEPRS(object):
                 jac=use_jac,
                 method="L-BFGS-B",
                 options={
-                    "maxiter": 1000,
+                    "maxiter": 500,
                     "gtol": 1e-5,
-                    "ftol": 1e-8,
+                    "ftol": 1e-5,
                 },
             )
 
@@ -1025,15 +862,86 @@ class MoEPRS(object):
 
         return (self.predict_proba(prs_dataset) * scaled_preds).sum(axis=1)
 
+    def _pack_all_params(self):
+        parts = [self.gate_params.flatten()]
+        if self.expert_params is not None:
+            parts.append(self.expert_params.flatten())
+        if self.global_params is not None:
+            parts.append(self.global_params.flatten())
+        if self.log_resid is not None:
+            parts.append(self.log_resid.flatten())
+        return np.concatenate(parts)
+
+    def _unpack_all_params(self, theta):
+        idx = 0
+        n = self.gate_params.size
+        self.gate_params = theta[idx : idx + n].reshape(self.gate_params.shape)
+        idx += n
+        if self.expert_params is not None:
+            n = self.expert_params.size
+            self.expert_params = theta[idx : idx + n].reshape(self.expert_params.shape)
+            idx += n
+        if self.global_params is not None:
+            n = self.global_params.size
+            self.global_params = theta[idx : idx + n]
+            idx += n
+        if self.log_resid is not None:
+            n = self.log_resid.size
+            self.log_resid = theta[idx : idx + n]
+        self.log_w = self.predict_proba(log=True)
+        self.update_expert_losses()
+
+    def squarem_step(self):
+        """
+        One SQUAREM-accelerated EM step (Varadhan & Roland 2008).
+        Replaces two standard EM steps with one extrapolated step.
+        Falls back to the second standard step if the extrapolation worsens the objective.
+        """
+        # Two standard EM steps
+        theta0 = self._pack_all_params()
+        self.e_step()
+        self.m_step()
+        theta1 = self._pack_all_params()
+        self.e_step()
+        self.m_step()
+        theta2 = self._pack_all_params()
+
+        # Step-length vectors
+        r = theta1 - theta0  # first EM displacement
+        v = theta2 - theta1 - r  # second-order difference
+
+        v_norm_sq = np.dot(v, v)
+        if v_norm_sq < 1e-12:
+            # Already converged, no meaningful acceleration possible
+            return
+
+        # Optimal step length (negative by construction, clamped to [-1, ...])
+        alpha = -np.linalg.norm(r) / np.sqrt(v_norm_sq)
+        alpha = min(alpha, -1.0)
+
+        # Extrapolated parameter proposal
+        theta_prop = theta0 - 2.0 * alpha * r + alpha**2 * v
+        obj_theta2 = self.complete_nll()  # objective at theta2 (current state)
+
+        self._unpack_all_params(theta_prop)
+        self.e_step()  # one E-step to sync responsibilities to the new params
+
+        if self.complete_nll() > obj_theta2:
+            # Extrapolation made things worse — revert to theta2
+            self._unpack_all_params(theta2)
+            self.e_step()
+
     def fit(
         self,
         continued=False,
         n_iter=1000,
+        use_acceleration=True,
         n_restarts=1,
         param_0=None,
         patience=10,
         atol=1e-5,
         objective="ncll",
+        verbose=True,
     ):
         objective = objective.lower()
 
@@ -1044,7 +952,7 @@ class MoEPRS(object):
         else:
             raise ValueError("Objective must be one of 'ncll' or 'ensemble_loss'")
 
-        pbar = tqdm(range(n_restarts * n_iter))
+        pbar = tqdm(range(n_restarts * n_iter), disable=not verbose)
 
         restart = True
         curr_iter = 0
@@ -1066,18 +974,22 @@ class MoEPRS(object):
                 if not continued:
                     self.initialize(param_0=param_0, init_history=False)
 
-            self.e_step()
-            self.m_step()
+            if use_acceleration:
+                self.squarem_step()
+            else:
+                self.e_step()
+                self.m_step()
 
             self.history["NCLL"].append(self.complete_nll())
-            self.history["Weighted Loss"].append(self.weighted_loss())
-            self.history["Weighted NLL"].append(self.weighted_nll())
-            self.history["Gate Loss"].append(self.gate_loss())
+            self.history["model_params"].append(self._pack_all_params())
+            # self.history["Weighted Loss"].append(self.weighted_loss())
+            # self.history["Weighted NLL"].append(self.weighted_nll())
+            # self.history["Gate Loss"].append(self.gate_loss())
             self.history["Ensemble Loss"].append(self.ensemble_loss())
-            self.history["Expert Losses"].append(self._expert_loss.mean(axis=0))
-            self.history["Model Weights"].append(
-                self.expert_responsibility.mean(axis=0)
-            )
+            # self.history["Expert Losses"].append(self._expert_loss.mean(axis=0))
+            # self.history["Model Weights"].append(
+            #    self.expert_responsibility.mean(axis=0)
+            # )
 
             if curr_iter > 0:
                 if np.allclose(
@@ -1086,22 +998,26 @@ class MoEPRS(object):
                     atol=atol,
                     rtol=0.0,
                 ):
-                    print(f"Objective converged at iteration {curr_iter}")
+                    if verbose:
+                        print(f"Objective converged at iteration {curr_iter}")
                     restart = True
                 elif self.param_tracker.all_close(
                     self.get_model_parameters(), atol=atol
                 ):
-                    print(f"Parameters converged at iteration {curr_iter}")
+                    if verbose:
+                        print(f"Parameters converged at iteration {curr_iter}")
                     restart = True
                 elif patience_r < 1:
-                    print("Model is no longer improving; Breaking...")
+                    if verbose:
+                        print("Model is no longer improving; Breaking...")
                     restart = True
                 elif self.history["NCLL"][-1] > self.history["NCLL"][-2]:
                     patience_r -= 1
                     if self.switch_optimizer and self.optimizer == "lstsq":
-                        print(
-                            f"> Iteration {curr_iter}: Switching optimizer from lstsq to L-BFGS-B."
-                        )
+                        if verbose:
+                            print(
+                                f"> Iteration {curr_iter}: Switching optimizer from lstsq to L-BFGS-B."
+                            )
                         self.optimizer = "L-BFGS-B"
 
             curr_iter += 1
@@ -1117,65 +1033,68 @@ class MoEPRS(object):
             )
 
         # Retrieve the parameters with the best objective value:
-        self.gate_params = self.param_tracker.best_params["gate_params"].values.copy()
+        self.gate_params = self.param_tracker.best_params["gate_params"].copy()
         if self.expert_params is not None:
-            self.expert_params = self.param_tracker.best_params[
-                "expert_params"
-            ].values.copy()
+            self.expert_params = self.param_tracker.best_params["expert_params"].copy()
         if self.log_resid is not None:
             self.log_resid = (
-                self.param_tracker.best_params["log_resid"].values.copy().flatten()
+                self.param_tracker.best_params["log_resid"].copy().flatten()
             )
 
         return self
 
-    def get_model_parameters(self):
-        gate_param_names = [[], ["Intercept"]][self.gate_add_intercept]
-        if self.gate_input_cols is not None:
-            gate_param_names += self.gate_input_cols
+    def get_model_parameters(self, return_dataframe=False):
+        params = {}
 
-        params = {
-            "gate_params": pd.DataFrame(
+        if return_dataframe:
+            gate_param_names = [[], ["Intercept"]][self.gate_add_intercept]
+            if self.gate_input_cols is not None:
+                gate_param_names += self.gate_input_cols
+
+            gate_params = pd.DataFrame(
                 self.gate_params, index=gate_param_names, columns=self.expert_cols[:-1]
             )
-        }
+        else:
+            gate_params = self.gate_params
+
+        params["gate_params"] = gate_params
 
         if self.expert_params is not None:
-            columns = []
-            if self.expert_add_intercept:
-                columns.append("Intercept")
-            columns += self.expert_covariates_cols or []
-            columns += ["PRS"]
+            if return_dataframe:
+                columns = []
+                if self.expert_add_intercept:
+                    columns.append("Intercept")
+                columns += self.expert_covariates_cols or []
+                columns += ["PRS"]
 
-            params["expert_params"] = pd.DataFrame(
-                self.expert_params, index=self.expert_cols, columns=columns
-            )
+                expert_params = pd.DataFrame(
+                    self.expert_params, index=self.expert_cols, columns=columns
+                )
+            else:
+                expert_params = self.expert_params
+
+            params["expert_params"] = expert_params
 
         if self.global_params is not None:
-            params["global_params"] = pd.DataFrame(
-                self.global_params,
-                columns=["Coefficient"],
-                index=[[], ["Intercept"]][not self.expert_add_intercept]
-                + self.global_covariates_cols,
-            )
+            if return_dataframe:
+                params["global_params"] = pd.DataFrame(
+                    self.global_params,
+                    columns=["Coefficient"],
+                    index=[[], ["Intercept"]][not self.expert_add_intercept]
+                    + self.global_covariates_cols,
+                )
+
+                params["global_params"] = self.global_params
 
         if self.log_resid is not None:
-            params["log_resid"] = pd.DataFrame(
-                self.log_resid,
-                columns=["Log Residual Variance"],
-                index=self.expert_cols,
-            )
-
-        return params
-
-    def _params_to_init_dict(self):
-        params = self.get_model_parameters()
-
-        for key, val in params.items():
-            params[key] = val.values
-
-            if key == "global_params":
-                params[key] = params[key].flatten()
+            if return_dataframe:
+                params["log_resid"] = pd.DataFrame(
+                    self.log_resid,
+                    columns=["Log Residual Variance"],
+                    index=self.expert_cols,
+                )
+            else:
+                params["log_resid"] = self.log_resid
 
         return params
 

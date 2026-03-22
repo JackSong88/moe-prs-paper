@@ -1,13 +1,10 @@
 import argparse
-import copy
 import json
 import os.path as osp
-import pickle
 import sys
 from functools import partial
 
 import pandas as pd
-import torch
 from magenpy.utils.system_utils import makedir
 
 sys.path.append(osp.dirname(osp.dirname(__file__)))
@@ -20,7 +17,6 @@ from PRSDataset import PRSDataset
 
 from moe_pytorch import make_deterministic, Lit_MoEPRS, train_model
 from utils import Timer
-import copy
 
 import ast
 
@@ -374,36 +370,7 @@ def train_all_models(
             runtimes.update(mr)
 
     if not skip_moe_pytorch:
-        pt_kwargs = dict(
-            loss="likelihood_mixture2",
-            fix_sigma2=False,                      # Train MoE-SGD with estimated sigma2 (when gaussian)
-            optimizer="Adam",
-            gate_model_layers=None,               # Gate network architecture
-            gate_add_batch_norm=False,
-            gate_add_layer_norm=True,
-            learning_rate=1e-3,
-            weight_decay=0,          
-            max_epochs=500,            
-            batch_size=2048,          
-            seed=seed,
-            topk_k=None,                           # Top-k routing       
-            tau_start=2.0,                         # Temperature schedule starting value
-            tau_end=1.0,                           # Ending temperature value
-            tau_warm_epochs=10,
-            tau_decay_epochs=90,
-            hard_ste=False,                        # irrelevant when no top-k
-            lb_coef=0.00,                          # Load balancing coefficient
-            ent_coef=0.5,                          # Entropy regularization coefficient
-            ent_coef_end=0.0,
-            ent_warm_epochs=10,                    # Number of epochs to warm up entropy regularization
-            ent_decay_epochs=90,                   # Number of epochs to decay entropy regularization
-            ancestry_balance_lambda=None,          # Ancestry balancing sampling coefficient 
-            use_per_expert_bias=False,             # per expert bias terms
-            add_covariates_to_experts=False,       # per expert covariate effects
-            use_global_head=True,                  # global covariate head
-            global_head_bias=True,                 # global covariate head with bias
-            binomial_logit_level=True,
-        )
+        pt_kwargs = Lit_MoEPRS.default_training_kwargs(seed=seed)
 
         if moe_pytorch_kwargs:
             pt_kwargs.update(moe_pytorch_kwargs)
@@ -579,132 +546,11 @@ if __name__ == "__main__":
     for model_name, model in trained_models.items():
         runtime_min = model_runtimes.get(model_name, None)
 
-        out = osp.join(output_dir, f'{model_name}.pkl')
-        try:
-            model.save(out)
-            print(f"Saved NumPy model: {model_name}")
+        out = osp.join(output_dir, f"{model_name}{getattr(model, 'save_ext', '.pkl')}")
+        model.save(out)
+        print(f"Saved model: {model_name}")
 
-            if runtime_min is not None:
-                payload = {"Runtime_min": runtime_min}
-                with open(osp.join(output_dir, f"{model_name}_runtime.json"), "w") as f:
-                    json.dump(payload, f)
-        except Exception:
-            #pytorch models
-            pt_path = osp.join(output_dir, f"{model_name}.pt")
-
-            # ---- Extract and store torch configuration ----
-            config = {
-                "loss": model.loss,
-                "optimizer": model.optimizer,
-                "learning_rate": model.lr,
-                "weight_decay": model.weight_decay,
-                "gate_model_layers": getattr(model, "gate_model_layers", None),
-                "gate_add_batch_norm": model.gate_add_batch_norm,
-                "family": model.family,
-
-                "topk_k": getattr(model, "topk_k", None),
-                "tau_start": getattr(model, "tau_start", 1.0),
-                "tau_end": getattr(model, "tau_end", 1.0),
-                "hard_ste": getattr(model, "hard_ste", True),
-                "lb_coef": getattr(model, "lb_coef", 0.0),
-                "eps": getattr(model, "eps", 1e-12),
-                "ent_coef_start": getattr(model, "ent_coef_start", getattr(model, "ent_coef", 0.0)),
-                "ent_coef_end": getattr(model, "ent_coef_end", getattr(model, "ent_coef", 0.0)),
-                "ent_warm_epochs": getattr(model, "ent_warm_epochs", 0),
-                "ent_decay_epochs": getattr(model, "ent_decay_epochs", 0),
-
-                "use_per_expert_bias": getattr(model, "use_per_expert_bias", False),
-                "use_global_head": getattr(model, "use_global_head", False),
-                "min_sigma2": float(getattr(model, "min_sigma2", 0.0)) if hasattr(model, "min_sigma2") else None,
-                "expert_bias_scale_floor": float(getattr(model, "expert_bias_scale_floor", 0.0)),
-                "has_expert_covariates": ("expert_covariates" in getattr(model, "group_getitem_cols", {})),
-                "global_head_bias": (
-                    getattr(model, "global_head", None) is not None and getattr(model.global_head, "bias", None) is not None
-                ),
-
-                "gate_add_layer_norm": getattr(model, "gate_add_layer_norm", False),
-            }
-
-            # ---- Save state_dict + config inside one checkpoint ----
-            torch.save({
-                "state_dict": model.state_dict(),
-                "config": config
-            }, pt_path)
-            print(f"Saved PyTorch model checkpoint: {model_name}")
-
-            if runtime_min is not None:
-                payload = {"Runtime_min": runtime_min}
-                with open(osp.join(output_dir, f"{model_name}_runtime.json"), "w") as f:
-                    json.dump(payload, f)
-
-            # ---- Save scaler used at training time on the training dataset (same scaler will be used later for evaluation)----
-            scaler_path = osp.join(output_dir, "MoE-PyTorch.scaler.pkl")
-            with open(scaler_path, "wb") as f:
-                pickle.dump(copy.deepcopy(prs_dataset.scaler), f)
-            print(f"Saved scaler: {scaler_path}")
-
-            # ---- Optional: save JSON for inspection ----
-            json_path = osp.join(output_dir, "inspect_MoE-PyTorch_config.json")
-            with open(json_path, "w") as jf:
-                json.dump(config, jf, indent=2)
-            print(f"Saved config JSON: {json_path}")
-
-            # ---- Save gate covariate weights for inspection ----
-            if hasattr(model, "gate_model"):
-                try:
-                    import pandas as pd
-                    import torch.nn as nn
-
-                    cov_names = prs_dataset.covariates_cols
-                    expert_names = prs_dataset.prs_cols
-                    C = len(cov_names)
-                    K = len(expert_names)
-
-                    # Find the last Linear (logits) layer
-                    linear = None
-                    for layer in reversed(list(model.gate_model.gate)):
-                        if isinstance(layer, nn.Linear):
-                            linear = layer
-                            break
-                    if linear is None:
-                        raise RuntimeError("Could not find an nn.Linear layer in gate_model.gate")
-
-                    # Only export if this layer maps covariates -> experts
-                    if linear.in_features != C or linear.out_features != K:
-                        print(
-                            f"Skipping gate weight export for {model_name}: "
-                            f"logits layer is {linear.out_features}x{linear.in_features}, "
-                            f"but expected {K}x{C} (nonlinear/hidden gate)."
-                        )
-                    else:
-                        W = linear.weight.detach().cpu().numpy()    # (K, C)
-                        b = linear.bias.detach().cpu().numpy()      # (K,)
-
-                        cov_names = prs_dataset.covariates_cols     # length C
-                        expert_names = prs_dataset.prs_cols         # length K
-
-                        rows = []
-                        for k, e_name in enumerate(expert_names):
-                            for j, c_name in enumerate(cov_names):
-                                rows.append({
-                                    "expert_idx": k,
-                                    "expert": e_name,
-                                    "covariate_idx": j,
-                                    "covariate": c_name,
-                                    "weight": float(W[k, j]),
-                                })
-                            # store bias as a separate "covariate"
-                            rows.append({
-                                "expert_idx": k,
-                                "expert": e_name,
-                                "covariate_idx": -1,
-                                "covariate": "bias",
-                                "weight": float(b[k]),
-                            })
-
-                        df = pd.DataFrame(rows)
-                        weights_path = osp.join(output_dir, f"{model_name}_gate_weights.csv")
-                        df.to_csv(weights_path, index=False)
-                        print(f"Saved gate weights: {weights_path}")
-                except Exception as e:
-                    print(f"Could not save gate weights for {model_name}: {e}")
+        if runtime_min is not None:
+            payload = {"Runtime_min": runtime_min}
+            with open(osp.join(output_dir, f"{model_name}_runtime.json"), "w") as f:
+                json.dump(payload, f)

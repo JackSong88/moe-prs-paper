@@ -182,6 +182,8 @@ def load_lit_from_pt(prs_dataset, pt_path, map_location="cpu", strict=True):
         topk_k=cfg.get("topk_k", None),
         tau_start=cfg.get("tau_start", 1.0),
         tau_end=cfg.get("tau_end", 1.0),
+        tau_warm_epochs=cfg.get("tau_warm_epochs", 0),
+        tau_decay_epochs=cfg.get("tau_decay_epochs", 0),
         hard_ste=cfg.get("hard_ste", True),
         lb_coef=cfg.get("lb_coef", 0.0),
         eps=cfg.get("eps", 1e-12),
@@ -192,6 +194,8 @@ def load_lit_from_pt(prs_dataset, pt_path, map_location="cpu", strict=True):
         ent_coef_end=cfg.get("ent_coef_end", None),
         ent_warm_epochs=cfg.get("ent_warm_epochs", 0),
         ent_decay_epochs=cfg.get("ent_decay_epochs", 0),
+        binomial_logit_level=cfg.get("binomial_logit_level", False),
+        center_expert_covariates=cfg.get("center_expert_covariates", True),
     )
 
     # Non-state attrs that affect forward
@@ -244,11 +248,13 @@ class TorchMoEModel:
         pin_memory=False,
         persistent_workers=False,
         prefetch_factor=2,
+        scaler_fname="MoE-PyTorch.scaler.pkl",
         device="cpu",
     ):
         self.lit_model = lit_model
         self.model_dir = model_dir
         self.expert_cols = list(expert_cols)
+        self.scaler_fname = scaler_fname
 
         self.pred_batch_size = int(pred_batch_size)
         self.gate_batch_size = int(gate_batch_size)
@@ -264,7 +270,9 @@ class TorchMoEModel:
 
     def _prepare_dataset(self, prs_dataset):
         # Apply scaler (deep copy)
-        d = apply_saved_scaler(prs_dataset, self.model_dir)
+        d = apply_saved_scaler(
+            prs_dataset, self.model_dir, scaler_fname=self.scaler_fname
+        )
 
         # Match group_getitem_cols expected by the Lightning model
         d.set_group_getitem_cols(self.lit_model.group_getitem_cols)
@@ -353,12 +361,14 @@ def load_model_any(prs_dataset, model_path, pred_batch_size=2048, gate_batch_siz
     if model_path.endswith(".pt"):
         lit = load_lit_from_pt(prs_dataset, model_path, map_location=wrapper_kwargs.get("device", "cpu"), strict=True)
         model_dir = osp.dirname(model_path)
+        model_name = osp.splitext(osp.basename(model_path))[0]
         return TorchMoEModel(
             lit_model=lit,
             model_dir=model_dir,
             expert_cols=prs_dataset.prs_cols,
             pred_batch_size=pred_batch_size,
             gate_batch_size=gate_batch_size,
+            scaler_fname=f"{model_name}.scaler.pkl",
             **wrapper_kwargs,
         )
 

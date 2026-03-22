@@ -1,5 +1,11 @@
-import numpy as np
+import copy
+import json
+import os
+import os.path as osp
+import pickle
 from functools import partial
+
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -17,7 +23,6 @@ try:
 except ImportError:
     torchsort = None
 
-import os
 import torch.nn.functional as F
 
 def configure_cpu_threads(cpus_per_task: int, num_workers: int, interop_threads: int = 1):
@@ -235,6 +240,40 @@ def gaussian_moe_nll(expert_weights, expert_predictions, phenotype, sigma2, eps=
 #########################################################
 # Define a PyTorch Lightning module to streamline training
 class Lit_MoEPRS(pl.LightningModule):
+    save_ext = ".pt"
+
+    @classmethod
+    def default_training_kwargs(cls, seed=8):
+        return {
+            "loss": "likelihood_mixture2",
+            "fix_sigma2": False,
+            "optimizer": "Adam",
+            "gate_model_layers": None,
+            "gate_add_batch_norm": False,
+            "gate_add_layer_norm": True,
+            "learning_rate": 1e-3,
+            "weight_decay": 0.0,
+            "max_epochs": 500,
+            "batch_size": 2048,
+            "seed": seed,
+            "topk_k": None,
+            "tau_start": 2.0,
+            "tau_end": 1.0,
+            "tau_warm_epochs": 10,
+            "tau_decay_epochs": 90,
+            "hard_ste": False,
+            "lb_coef": 0.0,
+            "ent_coef": 0.5,
+            "ent_coef_end": 0.0,
+            "ent_warm_epochs": 10,
+            "ent_decay_epochs": 90,
+            "ancestry_balance_lambda": None,
+            "use_per_expert_bias": False,
+            "add_covariates_to_experts": False,
+            "use_global_head": True,
+            "global_head_bias": True,
+            "binomial_logit_level": True,
+        }
 
     def __init__(self,
                  group_getitem_cols,
@@ -284,6 +323,7 @@ class Lit_MoEPRS(pl.LightningModule):
         super().__init__()
 
         self.center_expert_covariates = bool(center_expert_covariates)
+        self.training_scaler = None
 
         # -------------------------------------------------------
         # Sanity checks for the inputs:
@@ -885,6 +925,137 @@ class Lit_MoEPRS(pl.LightningModule):
 
         return self.gate_forward(next(iter(dat))).detach().numpy()
 
+    def export_config(self):
+        return {
+            "loss": self.loss,
+            "optimizer": self.optimizer,
+            "learning_rate": self.lr,
+            "weight_decay": self.weight_decay,
+            "gate_model_layers": getattr(self, "gate_model_layers", None),
+            "gate_add_batch_norm": self.gate_add_batch_norm,
+            "gate_add_layer_norm": getattr(self, "gate_add_layer_norm", False),
+            "family": self.family,
+            "topk_k": getattr(self, "topk_k", None),
+            "tau_start": getattr(self, "tau_start", 1.0),
+            "tau_end": getattr(self, "tau_end", 1.0),
+            "tau_warm_epochs": getattr(self, "tau_warm_epochs", 0),
+            "tau_decay_epochs": getattr(self, "tau_decay_epochs", 0),
+            "hard_ste": getattr(self, "hard_ste", True),
+            "lb_coef": getattr(self, "lb_coef", 0.0),
+            "eps": getattr(self, "eps", 1e-12),
+            "ent_coef_start": getattr(
+                self, "ent_coef_start", getattr(self, "ent_coef", 0.0)
+            ),
+            "ent_coef_end": getattr(
+                self, "ent_coef_end", getattr(self, "ent_coef", 0.0)
+            ),
+            "ent_warm_epochs": getattr(self, "ent_warm_epochs", 0),
+            "ent_decay_epochs": getattr(self, "ent_decay_epochs", 0),
+            "use_per_expert_bias": getattr(self, "use_per_expert_bias", False),
+            "use_global_head": getattr(self, "use_global_head", False),
+            "global_head_bias": (
+                getattr(self, "global_head", None) is not None
+                and getattr(self.global_head, "bias", None) is not None
+            ),
+            "min_sigma2": float(getattr(self, "min_sigma2", 0.0))
+            if hasattr(self, "min_sigma2")
+            else None,
+            "expert_bias_scale_floor": float(
+                getattr(self, "expert_bias_scale_floor", 0.0)
+            ),
+            "has_expert_covariates": (
+                "expert_covariates" in getattr(self, "group_getitem_cols", {})
+            ),
+            "binomial_logit_level": bool(
+                getattr(self, "binomial_logit_level", False)
+            ),
+            "center_expert_covariates": bool(
+                getattr(self, "center_expert_covariates", True)
+            ),
+        }
+
+    def _gate_weights_dataframe(self):
+        if not hasattr(self, "gate_model") or self.gate_model is None:
+            return None
+
+        cov_names = list(self.group_getitem_cols.get("gate_input", []))
+        expert_names = list(self.group_getitem_cols.get("experts", []))
+        C = len(cov_names)
+        K = len(expert_names)
+
+        linear = None
+        for layer in reversed(list(self.gate_model.gate)):
+            if isinstance(layer, nn.Linear):
+                linear = layer
+                break
+
+        if linear is None or linear.in_features != C or linear.out_features != K:
+            return None
+
+        import pandas as pd
+
+        W = linear.weight.detach().cpu().numpy()
+        b = linear.bias.detach().cpu().numpy()
+
+        rows = []
+        for k, e_name in enumerate(expert_names):
+            for j, c_name in enumerate(cov_names):
+                rows.append(
+                    {
+                        "expert_idx": k,
+                        "expert": e_name,
+                        "covariate_idx": j,
+                        "covariate": c_name,
+                        "weight": float(W[k, j]),
+                    }
+                )
+            rows.append(
+                {
+                    "expert_idx": k,
+                    "expert": e_name,
+                    "covariate_idx": -1,
+                    "covariate": "bias",
+                    "weight": float(b[k]),
+                }
+            )
+
+        return pd.DataFrame(rows)
+
+    def save(self, output_file):
+        base_path, ext = osp.splitext(output_file)
+        if ext.lower() != self.save_ext:
+            output_file = base_path + self.save_ext
+
+        output_dir = osp.dirname(output_file)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
+        model_name = osp.splitext(osp.basename(output_file))[0]
+        config = self.export_config()
+        checkpoint = {
+            "state_dict": self.state_dict(),
+            "config": config,
+        }
+
+        if self.training_scaler is not None:
+            checkpoint["scaler"] = copy.deepcopy(self.training_scaler)
+
+        torch.save(checkpoint, output_file)
+
+        if self.training_scaler is not None:
+            scaler_path = osp.join(output_dir, f"{model_name}.scaler.pkl")
+            with open(scaler_path, "wb") as f:
+                pickle.dump(copy.deepcopy(self.training_scaler), f)
+
+        config_path = osp.join(output_dir, f"inspect_{model_name}_config.json")
+        with open(config_path, "w") as jf:
+            json.dump(config, jf, indent=2)
+
+        weights_df = self._gate_weights_dataframe()
+        if weights_df is not None:
+            weights_path = osp.join(output_dir, f"{model_name}_gate_weights.csv")
+            weights_df.to_csv(weights_path, index=False)
+
     def configure_optimizers(self):
 
         if self.optimizer == "Adam":
@@ -1171,6 +1342,7 @@ def train_model(lit_model, dataset, max_epochs=100, prop_validation=0.2, batch_s
     ckpt = torch.load(ckpt_callback.best_model_path, weights_only=False)
     lit_model.load_state_dict(ckpt['state_dict'])
     lit_model.eval()
+    lit_model.training_scaler = copy.deepcopy(dataset.scaler)
 
     return trainer, lit_model
 

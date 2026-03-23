@@ -120,7 +120,7 @@ def load_lit_from_pt(prs_dataset, pt_path, map_location="cpu", strict=True):
     Robust to older checkpoints missing gate_add_layer_norm / stale gate_model_layers by
     inferring the correct gate structure from the state_dict.
     """
-    checkpoint = torch.load(pt_path, map_location=map_location)
+    checkpoint = torch.load(pt_path, map_location=map_location, weights_only=False)
     if "config" not in checkpoint:
         raise ValueError(f"Missing 'config' in checkpoint: {pt_path}")
     if "state_dict" not in checkpoint:

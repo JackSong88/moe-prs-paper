@@ -170,7 +170,7 @@ def load_lit_from_pt(prs_dataset, pt_path, map_location="cpu", strict=True):
     """
     Rebuild Lit_MoEPRS from checkpoint config, robust to global_head_bias changes.
     """
-    ckpt = torch.load(pt_path, map_location=map_location)
+    ckpt = torch.load(pt_path, map_location=map_location, weights_only=False)
     if "config" not in ckpt or "state_dict" not in ckpt:
         raise ValueError(f"Malformed checkpoint (need config + state_dict): {pt_path}")
 

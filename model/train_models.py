@@ -91,9 +91,7 @@ def train_baseline_linear_models(
     # ancestry labels in the dataset, then run the AncestryWeightedPRS model:
     if (
         len(
-            set(model_names.values()).intersection(
-                set(dataset.data["Ancestry"]).unique()
-            )
+            set(model_names.values()).intersection(set(dataset.data["Ancestry"]))
         )
         >= 2
     ):
